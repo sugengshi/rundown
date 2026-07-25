@@ -1,0 +1,110 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rundown</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .hero{max-width:620px;margin:0 auto;padding:72px 16px 40px}
+  .hero h1{font-family:var(--display);font-size:56px;line-height:1;letter-spacing:.04em;
+    text-transform:uppercase;margin:0 0 14px}
+  .hero p{color:var(--muted);font-size:15px;line-height:1.6}
+  .warn-list{color:var(--muted);font-size:13px;line-height:1.7;padding-left:18px}
+  .warn-list b{color:var(--text)}
+</style>
+
+<div class="topbar">
+  <a class="brand" href="/"><span class="dot"></span><h1>Rundown</h1></a>
+</div>
+
+<div class="hero">
+  <h1>Keep the show on time</h1>
+  <p>Build a running order, hit <kbd>Space</kbd> to take each cue live, and anyone
+     with your viewer link watches the clock move in real time. No accounts.</p>
+
+  <div class="card" id="startCard">
+    <h3>Start here</h3>
+    <p style="color:var(--muted);margin:10px 0 16px">
+      You get one secret link that holds every rundown you make. There is no
+      password reset, because there is no password — <b style="color:var(--text)">bookmark
+      the link or you lose the list</b>.
+    </p>
+    <button class="btn primary" id="btnCreate">Create my studio link</button>
+  </div>
+
+  <div class="card" id="keyCard" style="display:none">
+    <h3>Bookmark this now</h3>
+    <p style="color:var(--muted);margin:10px 0 12px">
+      This is the only way back to your rundowns. Save it somewhere you trust —
+      a bookmark, a note, an email to yourself.
+    </p>
+    <div class="keybox">
+      <input id="opUrl" readonly>
+      <button class="btn" id="btnCopy">Copy</button>
+    </div>
+    <p style="margin:16px 0 0"><a id="goStudio" href="#">I've saved it — open my studio →</a></p>
+  </div>
+
+  <div class="card">
+    <h3>Already have a link?</h3>
+    <p style="color:var(--muted);margin:10px 0 12px">Paste your studio link to get back in.</p>
+    <div class="keybox">
+      <input id="pasteUrl" placeholder="https://…/studio?o=…" style="color:var(--text)">
+      <button class="btn" id="btnOpen">Open</button>
+    </div>
+  </div>
+
+  <h3 style="margin-top:34px">Worth knowing before you rely on it</h3>
+  <ul class="warn-list">
+    <li><b>Viewer links are public.</b> Anyone who has one can read the running order. Notes stay hidden from viewers unless you turn sharing on.</li>
+    <li><b>Nothing deletes itself.</b> Archiving is manual and reversible. Permanent deletion is manual and is not.</li>
+    <li><b>Countdowns run on each viewer's device</b> from a synced start time, so they stay smooth on bad wifi — but a disconnected viewer will keep counting the wrong segment without saying so.</li>
+  </ul>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+$("btnCreate").onclick = async () => {
+  $("btnCreate").disabled = true;
+  try{
+    const r = await fetch("/api/operators", { method:"POST" });
+    if(!r.ok) throw new Error("Server said " + r.status);
+    const { operatorKey } = await r.json();
+    const url = location.origin + "/studio?o=" + encodeURIComponent(operatorKey);
+    $("opUrl").value = url;
+    $("goStudio").href = url;
+    $("startCard").style.display = "none";
+    $("keyCard").style.display = "block";
+    try{ localStorage.setItem("rundown-operator", operatorKey); }catch(e){}
+  }catch(e){
+    $("btnCreate").disabled = false;
+    alert("Could not create a studio link: " + e.message);
+  }
+};
+
+$("btnCopy").onclick = async () => {
+  try{
+    await navigator.clipboard.writeText($("opUrl").value);
+    $("btnCopy").textContent = "Copied";
+    setTimeout(()=>$("btnCopy").textContent="Copy", 1400);
+  }catch(e){ $("opUrl").select(); }
+};
+
+$("btnOpen").onclick = () => {
+  const v = $("pasteUrl").value.trim();
+  if(!v) return;
+  let key = v;
+  try{ key = new URL(v).searchParams.get("o") || v; }catch(e){}
+  location.href = "/studio?o=" + encodeURIComponent(key);
+};
+$("pasteUrl").addEventListener("keydown", e => { if(e.key==="Enter") $("btnOpen").click(); });
+
+// convenience only — the URL remains the source of truth
+try{
+  const saved = localStorage.getItem("rundown-operator");
+  if(saved) $("pasteUrl").value = location.origin + "/studio?o=" + saved;
+}catch(e){}
+</script>

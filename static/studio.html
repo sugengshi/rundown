@@ -1,0 +1,189 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio — Rundown</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
+  .sect{margin-bottom:34px}
+  .sect > h2{margin-bottom:12px;font-size:16px}
+  .hint{color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.6}
+  td.name{font-weight:500}
+</style>
+
+<div class="banner" id="banner"></div>
+
+<div class="topbar">
+  <a class="brand" href="/"><span class="dot"></span><h1>Rundown</h1></a>
+</div>
+
+<div class="wrap">
+  <div class="bar">
+    <button class="btn primary" id="btnNew">New rundown</button>
+    <button class="btn ghost" id="btnExport">Download everything</button>
+    <span style="flex:1"></span>
+    <span class="lab">Studio link</span>
+    <button class="btn ghost" id="btnCopyOp">Copy</button>
+  </div>
+
+  <div class="sect">
+    <h2>Active</h2>
+    <p class="hint">Archiving takes a rundown out of circulation and stops its viewer link.
+       The content is kept as CSV and can be restored.</p>
+    <div id="liveList"></div>
+  </div>
+
+  <div class="sect">
+    <h2>Archived</h2>
+    <p class="hint">Kept indefinitely. Deleting from here cannot be undone —
+       download the CSV first if there's any doubt.</p>
+    <div id="arcList"></div>
+  </div>
+
+  <div class="foot"><span id="state">Loading…</span></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const OP = new URLSearchParams(location.search).get("o") || "";
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+function banner(msg, kind){ const b=$("banner"); b.textContent=msg; b.className="banner "+kind; }
+function when(iso){
+  if(!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined,{day:"numeric",month:"short"}) + " " +
+         d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
+}
+
+if(!OP){
+  banner("This page needs your studio link. Open it from the bookmark you saved.", "bad");
+}
+
+try{ if(OP) localStorage.setItem("rundown-operator", OP); }catch(e){}
+
+async function api(path, opts){
+  const r = await fetch(path, opts);
+  if(!r.ok){
+    let msg = "Server said " + r.status;
+    try{ msg = (await r.json()).error || msg; }catch(e){}
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+async function refresh(){
+  if(!OP) return;
+  try{
+    const d = await api("/api/studio?o=" + encodeURIComponent(OP));
+    renderLive(d.rundowns);
+    renderArc(d.archives);
+    $("state").textContent = `${d.rundowns.length} active · ${d.archives.length} archived`;
+  }catch(e){
+    banner("Could not load your rundowns: " + e.message, "bad");
+    $("state").textContent = "Offline";
+  }
+}
+
+function renderLive(rows){
+  const el = $("liveList");
+  if(!rows.length){
+    el.innerHTML = `<div class="empty">No rundowns yet. Make one and it'll show up here.</div>`;
+    return;
+  }
+  el.innerHTML = `<table><thead><tr>
+      <th>Show</th><th>Last edited</th><th></th></tr></thead><tbody>` +
+    rows.map(r => `<tr>
+      <td class="name">${esc(r.name)}</td>
+      <td class="when">${when(r.updated_at)}</td>
+      <td><div class="rowacts">
+        <button class="btn ghost" data-act="open" data-id="${r.id}" data-k="${r.edit_key}">Open</button>
+        <button class="btn ghost" data-act="share" data-id="${r.id}">Copy viewer link</button>
+        <button class="btn ghost" data-act="archive" data-id="${r.id}" data-name="${esc(r.name)}">Archive</button>
+      </div></td></tr>`).join("") + `</tbody></table>`;
+}
+
+function renderArc(rows){
+  const el = $("arcList");
+  if(!rows.length){ el.innerHTML = `<div class="empty">Nothing archived.</div>`; return; }
+  el.innerHTML = `<table><thead><tr>
+      <th>Show</th><th>Archived</th><th></th></tr></thead><tbody>` +
+    rows.map(r => `<tr>
+      <td class="name">${esc(r.name)}</td>
+      <td class="when">${when(r.archived_at)}</td>
+      <td><div class="rowacts">
+        <button class="btn ghost" data-act="csv" data-id="${r.id}">Download CSV</button>
+        <button class="btn ghost" data-act="restore" data-id="${r.id}">Restore</button>
+        <button class="btn danger" data-act="destroy" data-id="${r.id}" data-name="${esc(r.name)}">Delete</button>
+      </div></td></tr>`).join("") + `</tbody></table>`;
+}
+
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button[data-act]");
+  if(!b) return;
+  const id = b.dataset.id, act = b.dataset.act;
+  const q = "?o=" + encodeURIComponent(OP);
+
+  if(act === "open"){
+    location.href = `/r/${id}?k=${encodeURIComponent(b.dataset.k)}&o=${encodeURIComponent(OP)}`;
+  }
+  if(act === "share"){
+    const url = location.origin + "/r/" + id;
+    try{ await navigator.clipboard.writeText(url); b.textContent = "Copied"; setTimeout(()=>b.textContent="Copy viewer link",1400); }
+    catch(err){ prompt("Viewer link", url); }
+  }
+  if(act === "archive"){
+    if(!confirm(`Archive "${b.dataset.name}"?\n\nThe viewer link stops working. You can restore it later.`)) return;
+    try{ await api(`/api/rundowns/${id}/archive${q}`, {method:"POST"}); banner("Archived.","good"); refresh(); }
+    catch(err){ banner("Could not archive: " + err.message, "bad"); }
+  }
+  if(act === "restore"){
+    try{ await api(`/api/archives/${id}/restore${q}`, {method:"POST"}); banner("Restored. It has a new edit link.","good"); refresh(); }
+    catch(err){ banner("Could not restore: " + err.message, "bad"); }
+  }
+  if(act === "csv"){ location.href = `/api/archives/${id}/csv${q}`; }
+  if(act === "destroy"){
+    const name = b.dataset.name;
+    if(!confirm(`Permanently delete "${name}"?\n\nThis cannot be undone.`)) return;
+    const typed = prompt(`Type the show name to confirm deletion:\n\n${name}`);
+    if(typed !== name){ banner("Name didn't match — nothing was deleted.","warn"); return; }
+    try{ await api(`/api/archives/${id}${q}`, {method:"DELETE"}); banner("Deleted permanently.","warn"); refresh(); }
+    catch(err){ banner("Could not delete: " + err.message, "bad"); }
+  }
+});
+
+$("btnNew").onclick = async () => {
+  const name = prompt("Name this rundown", "New show");
+  if(name === null) return;
+  try{
+    const d = await api("/api/rundowns?o=" + encodeURIComponent(OP), {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ name: name || "New show", data: starterData() })
+    });
+    location.href = `/r/${d.id}?k=${encodeURIComponent(d.editKey)}&o=${encodeURIComponent(OP)}`;
+  }catch(e){ banner("Could not create: " + e.message, "bad"); }
+};
+
+$("btnExport").onclick = () => { location.href = "/api/export?o=" + encodeURIComponent(OP); };
+$("btnCopyOp").onclick = async () => {
+  const url = location.origin + "/studio?o=" + OP;
+  try{ await navigator.clipboard.writeText(url); $("btnCopyOp").textContent="Copied"; setTimeout(()=>$("btnCopyOp").textContent="Copy",1400); }
+  catch(e){ prompt("Your studio link — keep it private", url); }
+};
+
+const rid = () => Math.random().toString(36).slice(2,10);
+function starterData(){
+  return { start:"10:00", live:null, shareNotes:false, items:[
+    { id:rid(), type:"heading", title:"Opening" },
+    { id:rid(), type:"cue", title:"Welcome & housekeeping", who:"Host", notes:"", dur:300 },
+    { id:rid(), type:"cue", title:"Main segment", who:"", notes:"", dur:1800 },
+    { id:rid(), type:"cue", title:"Q&A", who:"", notes:"", dur:600 }
+  ]};
+}
+
+refresh();
+</script>
