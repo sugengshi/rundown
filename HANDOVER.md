@@ -130,15 +130,60 @@ For broadcast, invert this.
 
 ---
 
+### Multi-day events, added 2026-07-25
+
+Originally the recommendation was one rundown per day — the data model only
+had a single `startEpoch`, so a multi-day event meant either re-entering
+cumulative offsets across days (unusable) or juggling several separate
+rundowns and edit links. Built properly instead: a new `"day"` item type
+(alongside existing `"cue"` and `"heading"`) that resets the running clock to
+an explicit date + time rather than continuing from the previous item's
+duration.
+
+What changed, if you touch this again:
+
+- `static/show.html`: `dayEpoch()` computes the reset point; `plannedStarts()`
+  applies it inline; `currentDaySegment()` scopes the "Show left" clock (both
+  the standby total and the live countdown) to the segment between the
+  nearest passed day-break and the next one, so day 3's cues don't get added
+  into day 1's remaining-time figure. The day-break row itself has its own
+  date/time inputs (`f-day-date`, `f-day-time`) instead of a duration field.
+- `app/main.py`: `day_epoch_ms()` is the Python mirror of `dayEpoch()`, used
+  by `to_csv()` so archived/exported CSVs reset correctly at each day break
+  too. Kept deliberately tolerant of malformed dates — falls back to holding
+  the previous clock position rather than raising, since a CSV export should
+  never hard-fail on bad data.
+- Day breaks inherit the single-timezone assumption the rest of the show
+  already makes (see "Drift assumes one timezone" below) — a date/time
+  entered from a different device/timezone than the show's `tz` will be
+  wrong in the same way changing "Show starts" from a different device
+  would be. Not a new limitation, just the existing one applied per day.
+- Reordering (`up`/`down`/`dup`) treats a day break like any other row —
+  moving cues across a day boundary is just moving them in the array, no
+  special-casing. This is intentional: which day a cue "belongs to" is
+  purely positional.
+
+---
+
 ## Known limits
 
-- **Drift assumes one timezone.** Show start times are wall-clock strings in the
-  operator's timezone. A viewer elsewhere sees a wrong drift figure; cue name
-  and countdown stay correct, so it degrades gracefully. Fix: store the start
-  as a real timestamp. **This is the most likely thing to bite first**, given
-  the operator is in Singapore working with an Indonesian community.
-- **Shows crossing midnight** produce nonsense start times. Same root cause,
-  same fix.
+- ~~**Drift assumes one timezone.**~~ **Fixed 2026-07-25.** Show start is now
+  `startEpoch` (absolute ms since epoch, set from the operator's own clock at
+  the moment they set/change "Show starts") plus `tz` (IANA zone name), not a
+  bare "HH:MM" re-interpreted per-viewer. Every viewer's browser formats that
+  same instant via `Intl.DateTimeFormat({timeZone: doc.tz})`, so cue times and
+  drift now read the same for the operator in Singapore and a viewer anywhere
+  else. Old rundowns (pre-fix) have no `startEpoch`; the client backfills it
+  from the operator's clock the first time they open the show and re-saves —
+  until then those specific rundowns still use the old per-viewer math. The
+  Python CSV export (`to_csv` in `app/main.py`) has the matching two paths.
+  If you touch this again: `plannedStarts()` and `fmtClock()` in
+  `static/show.html`, and `to_csv`/`fmt_clock_epoch` in `app/main.py`, need to
+  move together.
+- ~~**Shows crossing midnight** produce nonsense start times.~~ **Fixed as a
+  side effect** of the above — cumulative durations add to a real epoch
+  instead of wrapping mod 86400, so there's no rollover discontinuity to get
+  wrong.
 - **Device clocks matter.** A viewer five minutes off sees a five-minute error.
 - **Last write wins.** Two people on the same edit link overwrite each other
   silently. Single operator by design.

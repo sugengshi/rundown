@@ -48,6 +48,24 @@ in the page source. Flip **Show notes to viewers** on the rundown page if you
 want them shared. Everything else in a rundown is readable by anyone with the
 link. That's what a public viewer link means.
 
+## Multi-day events
+
+One rundown can cover a whole multi-day event instead of needing a separate
+rundown per day. Click **Add day** to insert a day break: give it a label,
+a date, and a start time. Everything after that point in the list starts
+counting from that day's start instead of continuing from the previous
+segment's duration — so day 2 doesn't accidentally start 30 hours into
+day 1's clock.
+
+The **Show left** figure only counts the current day's remaining segments,
+not the whole event, so it stays useful once there's more than one day in
+the list. Everything else — drift, the live cue, notes-stripping for
+viewers — works the same across a day break as within a day.
+
+Day breaks assume the whole event is in one timezone, same as the rest of
+the show; enter them from the same device/timezone you set "Show starts"
+from.
+
 ## Retention
 
 Nothing expires. Nothing is deleted on a schedule.
@@ -63,11 +81,21 @@ Nothing expires. Nothing is deleted on a schedule.
 
 Read this part.
 
-- **Drift assumes one timezone.** Cue start times are wall-clock strings in the
-  operator's timezone. A viewer elsewhere sees a wrong drift figure; the cue
-  name and countdown are still right. Fix is storing the show start as a real
-  timestamp — say the word.
-- **Shows crossing midnight** produce nonsense start times, same root cause.
+- ~~Drift assumes one timezone~~ **Fixed.** `doc.start` (the "HH:MM" field) is
+  now anchored to `startEpoch` — a real instant, set from the operator's own
+  clock the moment they set or change the start time — plus `tz`, the IANA
+  zone name, carried along so every viewer's browser renders that instant as
+  the same wall-clock time the operator sees, no matter where the viewer's
+  device thinks it is. Rundowns saved before this fix have no `startEpoch`;
+  the first time an operator opens one, the client fills it in from their own
+  clock and re-saves. Until then it falls back to the old (occasionally
+  wrong) behaviour. The Python-side CSV export mirrors this: new-style
+  archives use `startEpoch`/`tz`, pre-fix archives fall back to the legacy
+  wall-clock arithmetic.
+- ~~Shows crossing midnight produce nonsense start times~~ **Fixed as a
+  side effect** — cumulative durations are now added to a real timestamp
+  instead of wrapped mod 24h, so a show that runs past midnight just keeps
+  counting forward correctly.
 - **A disconnected viewer keeps counting the wrong segment.** Countdowns run
   locally from a synced start timestamp, which is why they stay smooth on bad
   wifi. The page shows a warning banner when the socket drops, but the numbers

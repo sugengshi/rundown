@@ -21,8 +21,14 @@ import zipfile
 import secrets
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - py<3.9 fallback, shouldn't happen on Railway
+    ZoneInfo = None
 
 import asyncpg
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -160,28 +166,101 @@ def fmt_dur(sec: int) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
+def fmt_clock_epoch(epoch_ms: float, tz_name: str | None) -> str:
+    """Format an absolute instant as HH:MM in the show's declared timezone.
+    Falls back to UTC if the zone name is missing or unrecognised, rather
+    than raising — an archive CSV should never fail to export."""
+    tz = timezone.utc
+    if tz_name and ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = timezone.utc
+    return datetime.fromtimestamp(epoch_ms / 1000, tz).strftime("%H:%M")
+
+
+def day_epoch_ms(item: dict, tz_name: str | None, fallback_ms: float) -> float:
+    """A 'day' item resets the running clock to a specific date + time
+    instead of continuing from the previous item's duration — same mechanic
+    as startEpoch, applied mid-rundown so one rundown can span several days.
+    Mirrors dayEpoch() in static/show.html; if the date is missing or
+    malformed, hold the clock where it was rather than jumping to 1970."""
+    date_s = item.get("date") or ""
+    try:
+        y, m, d = (int(p) for p in date_s.split("-"))
+    except Exception:
+        return fallback_ms
+    sec = parse_clock(item.get("time") or "09:00")
+    tz = timezone.utc
+    if tz_name and ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = timezone.utc
+    try:
+        dt = datetime(y, m, d, sec // 3600, (sec % 3600) // 60, sec % 60, tzinfo=tz)
+    except Exception:
+        return fallback_ms
+    return dt.timestamp() * 1000
+
+
 def to_csv(name: str, data: dict) -> str:
     """A rundown as flat CSV. This is the archive format — plain text on
-    purpose, so it outlives this application."""
+    purpose, so it outlives this application.
+
+    Rundowns created after the timezone fix carry `startEpoch` (an absolute
+    instant, ms since epoch) and `tz` (an IANA zone name) — the show's start
+    time as a real point in time, immune to the reader's own clock and to
+    midnight rollover. Older rundowns saved before that fix only have `start`
+    as a bare "HH:MM" wall-clock string with no zone attached; those still
+    render the old (occasionally wrong) way rather than being silently
+    reinterpreted."""
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow([f"Rundown: {name}"])
-    w.writerow([f"Show starts: {data.get('start', '')}"])
+    tz_name = data.get("tz")
+    start_label = data.get("start", "")
+    if tz_name:
+        start_label = f"{start_label} ({tz_name})"
+    w.writerow([f"Show starts: {start_label}"])
     w.writerow([])
     w.writerow(["Start", "Length", "Type", "Segment", "Who", "Notes"])
-    t = parse_clock(data.get("start", "00:00"))
-    for item in data.get("items", []):
-        is_cue = item.get("type") == "cue"
-        w.writerow([
-            fmt_clock(t),
-            fmt_dur(item.get("dur", 0)) if is_cue else "",
-            item.get("type", ""),
-            item.get("title", ""),
-            item.get("who", ""),
-            item.get("notes", ""),
-        ])
-        if is_cue:
-            t += int(item.get("dur") or 0)
+
+    start_epoch = data.get("startEpoch")
+    items = data.get("items", [])
+
+    if isinstance(start_epoch, (int, float)):
+        t_ms = float(start_epoch)
+        for item in items:
+            item_type = item.get("type", "")
+            if item_type == "day":
+                t_ms = day_epoch_ms(item, tz_name, t_ms)
+            is_cue = item_type == "cue"
+            w.writerow([
+                fmt_clock_epoch(t_ms, tz_name),
+                fmt_dur(item.get("dur", 0)) if is_cue else "",
+                item_type,
+                item.get("title", ""),
+                item.get("who", ""),
+                item.get("notes", ""),
+            ])
+            if is_cue:
+                t_ms += int(item.get("dur") or 0) * 1000
+    else:
+        # Legacy path for rundowns archived before the timezone fix.
+        t = parse_clock(data.get("start", "00:00"))
+        for item in items:
+            is_cue = item.get("type") == "cue"
+            w.writerow([
+                fmt_clock(t),
+                fmt_dur(item.get("dur", 0)) if is_cue else "",
+                item.get("type", ""),
+                item.get("title", ""),
+                item.get("who", ""),
+                item.get("notes", ""),
+            ])
+            if is_cue:
+                t += int(item.get("dur") or 0)
     return buf.getvalue()
 
 

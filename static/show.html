@@ -63,6 +63,18 @@
   .notes textarea{color:var(--muted);font-size:13px;min-height:22px}
   .addbar{display:flex;gap:8px;padding:14px 0}
 
+  /* A day break: resets the running clock to a specific date + time instead
+     of continuing from the previous cue's duration — see dayEpoch(). Styled
+     like a heading but bolder, since it's a bigger structural moment, and
+     carries its own date/time inputs instead of none. */
+  .row.day{grid-template-columns:14px 1fr 210px 118px;background:var(--live);background:rgba(255,68,56,.10);
+    border-top:2px solid var(--live);border-bottom:2px solid var(--live)}
+  .row.day .cell input.f-title{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--live)}
+  .daytime{display:flex;gap:6px;align-items:center}
+  .daytime input[type=date]{background:var(--panel);border:1px solid var(--rule);border-radius:4px;
+    padding:6px 8px;font-family:var(--mono);font-size:12px;color:var(--text);color-scheme:dark}
+
   body.viewer .shelf,body.viewer .addbar,body.viewer .transport,
   body.viewer .cell.tools,body.viewer .sharebox{display:none}
   body.viewer .cell input,body.viewer .cell textarea{pointer-events:none;border-color:transparent!important}
@@ -70,6 +82,8 @@
   @media (max-width:820px){
     .head{display:none}
     .row,.row.heading{grid-template-columns:10px 1fr 100px}
+    .row.day{grid-template-columns:10px 1fr 100px}
+    .daytime{display:none}
     .cell.num,.cell.start,.cell.who{display:none}
     .notes{grid-column:2/4}
   }
@@ -117,6 +131,7 @@
   <div class="addbar">
     <button class="btn" id="btnAddCue">Add segment</button>
     <button class="btn ghost" id="btnAddHead">Add section header</button>
+    <button class="btn ghost" id="btnAddDay">Add day</button>
   </div>
 
   <div class="foot">
@@ -164,17 +179,86 @@ function fmtDur(sec){
   return (neg?"−":"") + (h ? h+":"+pad(m)+":"+pad(s) : pad(m)+":"+pad(s));
 }
 const parseClock = s => { const p=String(s||"0").split(":").map(n=>parseInt(n,10)||0); return (p[0]||0)*3600+(p[1]||0)*60+(p[2]||0); };
-function fmtClock(sec){
-  sec = ((Math.round(sec)%86400)+86400)%86400;
-  const pad=n=>String(n).padStart(2,"0");
-  return pad(Math.floor(sec/3600))+":"+pad(Math.floor(sec%3600/60));
+
+// Cue start times used to be "seconds since midnight", re-interpreted against
+// whichever device happened to be looking at the page. That's the timezone
+// bug: a remote viewer's midnight isn't the operator's midnight, so the same
+// number meant a different clock time depending who read it — and a show
+// running past midnight wrapped back to 00:00 and went nonsensical.
+//
+// Fix: doc.startEpoch is an absolute instant (ms since the Unix epoch) set
+// once, from the operator's own clock, when they set or change "Show
+// starts". Every planned start is that instant plus the sum of the cue
+// durations before it — durations are just seconds, so this is immune to
+// timezones and rolls cleanly past midnight with no wraparound. doc.tz (an
+// IANA zone name, e.g. "Asia/Singapore") is carried along purely so every
+// viewer's browser can *display* that instant as the same wall-clock time
+// the operator sees, regardless of where the viewer's device thinks it is.
+function fmtClock(epochMs){
+  try{
+    return new Intl.DateTimeFormat("en-GB",
+      { hour:"2-digit", minute:"2-digit", hour12:false, timeZone: doc && doc.tz || undefined }
+    ).format(epochMs);
+  }catch(e){
+    // Unknown/garbled zone name — fall back to the viewing device's own
+    // clock rather than failing to render at all.
+    const d = new Date(epochMs), pad=n=>String(n).padStart(2,"0");
+    return pad(d.getHours())+":"+pad(d.getMinutes());
+  }
+}
+// A "day" item is a checkpoint that resets the running clock to a specific
+// date + time rather than continuing from the previous item's duration —
+// what makes a single multi-day rundown possible instead of one rundown per
+// day. It carries its own date ("YYYY-MM-DD") and time ("HH:MM"), read in
+// whatever device is editing it — same one-timezone assumption the rest of
+// the show already makes, just applied per day instead of once.
+function dayEpoch(it, fallback){
+  const parts = String(it.date||"").split("-").map(n=>parseInt(n,10));
+  if(parts.length!==3 || parts.some(isNaN)) return fallback;
+  const dt = new Date(parts[0], parts[1]-1, parts[2], 0, 0, 0, 0);
+  return dt.getTime() + parseClock(it.time||"09:00")*1000;
 }
 function plannedStarts(d){
-  let t = parseClock(d.start), out=[];
-  for(const it of d.items){ out.push(t); if(it.type==="cue") t += (it.dur||0); }
+  let t = d.startEpoch, out=[];
+  for(const it of d.items){
+    if(it.type==="day") t = dayEpoch(it, t);
+    out.push(t);
+    if(it.type==="cue") t += (it.dur||0)*1000;
+  }
   return out;
 }
-function midnight(){ const x=new Date(now()); x.setHours(0,0,0,0); return x.getTime(); }
+// Which slice of doc.items counts as "today" right now, for the Show-left
+// clock. With no day breaks this is the whole rundown, unchanged from
+// before. With day breaks, it's the segment between whichever day-break's
+// start has most recently passed and the next one (or the very first
+// segment, if we're before the first day-break's start).
+function currentDaySegment(){
+  const starts = plannedStarts(doc);
+  const days = [];
+  doc.items.forEach((it,i)=>{ if(it.type==="day") days.push({idx:i, epoch:starts[i]}); });
+  if(!days.length) return [0, doc.items.length];
+  let active = null;
+  for(const dd of days) if(dd.epoch <= now()) active = dd;
+  if(!active) return [0, days[0].idx];
+  const nxt = days.find(dd => dd.idx > active.idx);
+  return [active.idx+1, nxt ? nxt.idx : doc.items.length];
+}
+// Anchors doc.start ("HH:MM", still the editable field) to a real instant:
+// today, in whichever timezone the operator's own device is in, at that
+// clock time. Returns true if it had to fill in a missing anchor (i.e. this
+// rundown predates the fix, or was just created) so the caller knows whether
+// there's something new worth persisting.
+function setStartEpoch(clockStr){
+  const base = new Date(now());
+  base.setHours(0,0,0,0);
+  doc.startEpoch = base.getTime() + parseClock(clockStr)*1000;
+  doc.tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+function ensureStart(){
+  if(doc.startEpoch) return false;
+  setStartEpoch(doc.start || "10:00");
+  return true;
+}
 
 /* ---------- network ---------- */
 async function api(path, opts){
@@ -191,6 +275,7 @@ async function loadShow(){
   const d = await api(`/api/rundowns/${SHOW_ID}?${auth()}`);
   doc = d.data; name = d.name; canEdit = d.canEdit;
   doc.items = doc.items || [];
+  const migrated = ensureStart();
   if(!canEdit) document.body.classList.add("viewer");
   $("showName").textContent = name;
   document.title = name + " — Rundown";
@@ -201,6 +286,11 @@ async function loadShow(){
     $("inStart").value = doc.start || "10:00";
   }
   render();
+  // Only the operator's clock is trustworthy for anchoring the show's start
+  // time (see setStartEpoch). If this rundown predates the timezone fix and
+  // we just filled in that anchor, persist it so viewers stop computing it
+  // themselves off their own device's midnight.
+  if(canEdit && migrated) save(true);
   state("Loaded");
 }
 
@@ -213,6 +303,7 @@ function connect(){
     if(m.type === "update" && !canEdit){
       applyingRemote = true;
       doc = m.data; doc.items = doc.items || [];
+      ensureStart(); // display-only fallback if this arrived from a pre-fix save
       name = m.name; $("showName").textContent = name;
       render();
       applyingRemote = false;
@@ -272,6 +363,15 @@ function render(){
         <div class="cell"><input class="f-title" value="${escA(it.title||"")}" placeholder="Section name" aria-label="Section name"></div>
         <div class="cell tools">${tools(i, doc.items.length, false)}</div></div>`;
     }
+    if(it.type === "day"){
+      return `<div class="row day" data-i="${i}"><div class="tally"></div>
+        <div class="cell"><input class="f-title" value="${escA(it.title||"")}" placeholder="Day label" aria-label="Day label"></div>
+        <div class="cell daytime">
+          <input type="date" class="f-day-date" value="${escA(it.date||"")}" aria-label="Date">
+          <input class="tin f-day-time" value="${escA(it.time||"09:00")}" aria-label="Start time">
+        </div>
+        <div class="cell tools">${tools(i, doc.items.length, false)}</div></div>`;
+    }
     n++;
     const cls = i===liveIdx ? "live"
       : (liveIdx>=0 && i<liveIdx) ? "done"
@@ -317,7 +417,12 @@ function tick(){
     remainEl.textContent="—"; remainEl.className="val";
     nowEl.textContent="Standby";
     driftEl.textContent="00:00"; driftEl.className="val";
-    leftEl.textContent = fmtDur(doc.items.reduce((a,i)=>a+(i.type==="cue"?(i.dur||0):0),0));
+    // Scoped to today's segment, not the whole multi-day rundown — otherwise
+    // "Show left" on day 1 would include day 3's cues too.
+    const [segStart, segEnd] = currentDaySegment();
+    let total = 0;
+    for(let i=segStart;i<segEnd;i++) if(doc.items[i].type==="cue") total += doc.items[i].dur||0;
+    leftEl.textContent = fmtDur(total);
     return;
   }
   dot.style.background="var(--live)"; dot.style.boxShadow="0 0 10px var(--live)";
@@ -331,13 +436,16 @@ function tick(){
   remainEl.className = "val " + (remain<0 ? "over" : remain<60 ? "warn" : "");
   nowEl.textContent = it.title || "Untitled segment";
 
-  const plannedEpoch = midnight() + plannedStarts(doc)[idx]*1000;
+  const plannedEpoch = plannedStarts(doc)[idx];
   const drift = (doc.live.startedAt - plannedEpoch)/1000 + Math.max(0, elapsed - (it.dur||0));
   driftEl.textContent = (drift>=0?"+":"") + fmtDur(drift);
   driftEl.className = "val " + (drift>30?"over":drift<-30?"under":"");
 
+  // Same day-segment scoping while live: don't count tomorrow's cues as
+  // "left" in today's show.
+  const [, segEnd] = currentDaySegment();
   let left = Math.max(0, remain);
-  for(let i=idx+1;i<doc.items.length;i++) if(doc.items[i].type==="cue") left += (doc.items[i].dur||0);
+  for(let i=idx+1;i<segEnd;i++) if(doc.items[i].type==="cue") left += (doc.items[i].dur||0);
   leftEl.textContent = fmtDur(left);
 }
 setInterval(tick, 250);
@@ -380,9 +488,12 @@ $("rows").addEventListener("input", e => {
   save();
 });
 $("rows").addEventListener("change", e => {
-  if(!canEdit || !e.target.classList.contains("f-dur")) return;
-  doc.items[+e.target.closest(".row").dataset.i].dur = parseDur(e.target.value);
-  save(); render();
+  if(!canEdit) return;
+  const row = e.target.closest(".row"); if(!row) return;
+  const it = doc.items[+row.dataset.i];
+  if(e.target.classList.contains("f-dur")){ it.dur = parseDur(e.target.value); save(); render(); return; }
+  if(e.target.classList.contains("f-day-date")){ it.date = e.target.value; save(); render(); return; }
+  if(e.target.classList.contains("f-day-time")){ it.time = e.target.value.trim() || "09:00"; save(); render(); return; }
 });
 $("rows").addEventListener("keydown", e => {
   if(e.key === "Enter" && e.target.classList.contains("f-dur")) e.target.blur();
@@ -396,7 +507,11 @@ document.addEventListener("keydown", e => {
 
 $("btnGo").onclick = goNext;
 $("btnStop").onclick = stopShow;
-$("inStart").addEventListener("change", e => { doc.start = e.target.value.trim() || "10:00"; save(); render(); });
+$("inStart").addEventListener("change", e => {
+  doc.start = e.target.value.trim() || "10:00";
+  setStartEpoch(doc.start); // re-anchor to this device's clock/zone, "today"
+  save(); render();
+});
 $("chkNotes").addEventListener("change", e => {
   doc.shareNotes = e.target.checked;
   save(true);
@@ -411,6 +526,23 @@ $("btnRename").onclick = () => {
 };
 $("btnAddCue").onclick = () => { doc.items.push({ id:rid(), type:"cue", title:"", who:"", notes:"", dur:300 }); save(); render(); };
 $("btnAddHead").onclick = () => { doc.items.push({ id:rid(), type:"heading", title:"New section" }); save(); render(); };
+$("btnAddDay").onclick = () => {
+  // Default the new day to the day after whatever the last day-break (or
+  // the show's own start, if this is the first one) currently lands on, at
+  // the same time of day — a reasonable guess for "workshop starts at the
+  // same hour each morning" that the operator can just edit if it's wrong.
+  let last = doc.startEpoch;
+  for(const it of doc.items) if(it.type==="day") last = dayEpoch(it, last);
+  const nd = new Date(last + 24*3600*1000);
+  const pad = n => String(n).padStart(2,"0");
+  const dayNum = doc.items.filter(i=>i.type==="day").length + 2; // day 1 is implicit
+  doc.items.push({
+    id: rid(), type: "day", title: "Day " + dayNum,
+    date: `${nd.getFullYear()}-${pad(nd.getMonth()+1)}-${pad(nd.getDate())}`,
+    time: doc.start || "09:00",
+  });
+  save(); render();
+};
 $("btnCopy").onclick = async () => {
   try{ await navigator.clipboard.writeText($("shareUrl").value); $("btnCopy").textContent="Copied"; setTimeout(()=>$("btnCopy").textContent="Copy",1400); }
   catch(e){ $("shareUrl").select(); }
