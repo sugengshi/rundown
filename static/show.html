@@ -26,7 +26,13 @@
     border-radius:4px;padding:8px 10px;margin-bottom:16px;flex-wrap:wrap}
   .sharebox input{flex:1;min-width:220px;background:transparent;border:0;font-family:var(--mono);font-size:12px;color:var(--focus)}
 
-  .head,.row{display:grid;grid-template-columns:14px 34px 78px 78px 1fr 150px 118px;align-items:stretch}
+  /* minmax(0,...) rather than a bare 1fr — a plain 1fr track can't shrink
+     past the natural min-content width of what's inside it (an <input>
+     has a non-trivial one), so the grid quietly overflows its container
+     once the window's narrower than that. This is what was blowing the
+     page out sideways with no way to scroll back to the missing part. */
+  .rowsWrap{overflow-x:auto}
+  .head,.row{display:grid;grid-template-columns:14px 34px 78px 78px minmax(0,1fr) 150px 118px;align-items:stretch;min-width:0}
   .head{border-bottom:1px solid var(--rule);font-family:var(--display);font-size:12px;letter-spacing:.16em;
     text-transform:uppercase;color:var(--muted)}
   .head>div{padding:8px 10px}
@@ -56,7 +62,7 @@
     color:var(--muted);font-size:13px;display:grid;place-items:center}
   .icon:hover{border-color:var(--rule);color:var(--text)}
   .icon.golive:hover{color:var(--live);border-color:var(--live)}
-  .row.heading{grid-template-columns:14px 1fr 118px;background:var(--panel)}
+  .row.heading{grid-template-columns:14px minmax(0,1fr) 118px;background:var(--panel)}
   .row.heading .cell input{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.14em;
     text-transform:uppercase;color:var(--next)}
   .notes{grid-column:5/7;padding-top:0}
@@ -67,7 +73,7 @@
      of continuing from the previous cue's duration — see dayEpoch(). Styled
      like a heading but bolder, since it's a bigger structural moment, and
      carries its own date/time inputs instead of none. */
-  .row.day{grid-template-columns:14px 1fr 210px 118px;background:var(--live);background:rgba(255,68,56,.10);
+  .row.day{grid-template-columns:14px minmax(0,1fr) 210px 118px;background:var(--live);background:rgba(255,68,56,.10);
     border-top:2px solid var(--live);border-bottom:2px solid var(--live)}
   .row.day .cell input.f-title{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.14em;
     text-transform:uppercase;color:var(--live)}
@@ -81,8 +87,8 @@
   body:not(.viewer) .showname{display:none}
   @media (max-width:820px){
     .head{display:none}
-    .row,.row.heading{grid-template-columns:10px 1fr 100px}
-    .row.day{grid-template-columns:10px 1fr 100px}
+    .row,.row.heading{grid-template-columns:10px minmax(0,1fr) 100px}
+    .row.day{grid-template-columns:10px minmax(0,1fr) 100px}
     .daytime{display:none}
     .cell.num,.cell.start,.cell.who{display:none}
     .notes{grid-column:2/4}
@@ -125,8 +131,10 @@
     <span class="lab" id="viewerCount">0 watching</span>
   </div>
 
-  <div class="head"><div></div><div>#</div><div>Start</div><div>Length</div><div>Segment</div><div>Who</div><div></div></div>
-  <div class="rows" id="rows"></div>
+  <div class="rowsWrap">
+    <div class="head"><div></div><div>#</div><div>Start</div><div>Length</div><div>Segment</div><div>Who</div><div></div></div>
+    <div class="rows" id="rows"></div>
+  </div>
 
   <div class="addbar">
     <button class="btn" id="btnAddCue">Add segment</button>

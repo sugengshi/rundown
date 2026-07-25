@@ -7,7 +7,7 @@
   --mono:"IBM Plex Mono",ui-monospace,monospace;
 }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
 body{background:var(--base);color:var(--text);font-family:var(--body);font-size:14px;-webkit-font-smoothing:antialiased}
 a{color:var(--focus)}
 button{font-family:inherit;color:inherit;cursor:pointer}
