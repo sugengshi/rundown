@@ -32,6 +32,7 @@ There are no accounts and no passwords. Three kinds of link:
 |---|---|---|
 | **Studio** | `/studio?o=SECRET` | Everything you own: create, edit, archive, restore, delete, export |
 | **Edit** | `/r/ID?k=SECRET` | Edit and drive one rundown |
+| **Driver** | `/r/ID?d=SECRET` | Go / skip / stop cues on one rundown. Cannot change the running order |
 | **Viewer** | `/r/ID` | Watch. Nothing else |
 
 **The studio link is the whole account.** There is no recovery. Bookmark it,
@@ -39,6 +40,17 @@ and treat it like a password, because it is one.
 
 The edit link exists so you can hand a single show to a co-facilitator without
 handing over your whole studio.
+
+The **driver link** is for the person calling the show when that isn't you — an
+AV operator, a co-host, someone at the back of the room with a laptop. They get
+the Go/Stop buttons, the ▶ on each row, and the `Space`/`Esc` keys; they don't
+get the running order, the segment names, the durations, or the Notes column.
+Copy it from the studio list ("Copy driver link") or from the rundown page.
+
+**Treat the driver link as a password too.** It's weaker than the edit link, but
+whoever holds it can advance or stop cues on a live show. If it leaks mid-event
+there's no revoke button — archive and restore the rundown, which mints fresh
+edit *and* driver keys.
 
 ## What viewers can and can't see
 

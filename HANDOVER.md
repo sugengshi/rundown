@@ -49,12 +49,52 @@ No accounts, no passwords. Three kinds of link:
 |---|---|---|
 | Studio | `/studio?o=SECRET` | Everything you own |
 | Edit | `/r/ID?k=SECRET` | Edit and drive one rundown |
+| Driver | `/r/ID?d=SECRET` | Advance/stop cues on one rundown, nothing else |
 | Viewer | `/r/ID` | Watch, nothing else |
 
 Authority is checked server-side with `secrets.compare_digest` on every write.
 The WebSocket carries no authority at all — it only ever receives pings, and
 all edits go over HTTP where the keys get checked. Don't "improve" this by
 accepting edits over the socket.
+
+### The driver tier, added 2026-07-26
+
+Driving and editing were one permission; they're now two, because the person
+calling the show often isn't the person who built it. The split is enforced
+by *endpoint*, not by request-body filtering:
+
+- `PUT /api/rundowns/{id}` — the existing full-document save. Still requires
+  edit or owner authority. Unchanged.
+- `PUT /api/rundowns/{id}/live` — accepts edit, owner, *or* drive authority,
+  and can only ever write `data["live"]`. It reads the stored document,
+  replaces that one field, and writes it back. **A drive key cannot smuggle a
+  content change through this endpoint even by sending one** — extra keys in
+  the body are simply never read. That property is the whole point of the
+  separate endpoint; if you ever refactor these two together, you lose it.
+
+Other things that follow from the split, and shouldn't be undone:
+
+- `strip_for_viewer()` keys off `can_edit_row`, not `can_drive_row`. A driver
+  is *not* an editor, so **a driver does not receive the Notes column** — same
+  as a plain viewer. Tested; see below.
+- `driveKey` is only returned by `GET /api/rundowns/{id}` to someone who can
+  edit. A driver can't read their own key back out and re-share it upward.
+- Cue changes now broadcast as `{"type":"live"}` carrying only the cue
+  pointer, instead of riding along in the full `"update"` payload. The
+  operator's own browser now *applies* these (it used to ignore broadcasts and
+  trust local state) — necessary because a driver on another device can now
+  move the cue, and the operator has to see it happen.
+- `drive_key` is nullable and backfilled lazily by
+  `get_or_create_drive_key()`. Rundowns that existed before this feature get a
+  key the first time anyone asks for one. There's no migration step, matching
+  the rest of the project — `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in
+  `SCHEMA` handles the existing-deployment case, since `CREATE TABLE IF NOT
+  EXISTS` is a no-op there.
+- Restoring from archive mints a fresh drive key alongside the fresh edit key
+  — that's the only revocation path there is, same as before.
+
+**Last write wins still applies.** Two drivers on the same link, or a driver
+and an operator both hitting Go, will fight. Single caller by design.
 
 ---
 
@@ -221,6 +261,14 @@ were actually run:
 - another operator's key cannot delete your archive (404)
 - **Notes are stripped server-side from the viewer payload** — confirmed absent,
   not merely hidden in the UI
+- **driver tier (2026-07-26):** a drive key cannot edit content; a drive key
+  posting a content-hijack payload to `/live` has every content field
+  discarded while its cue change still applies; a drive key receives no Notes
+  and no `driveKey`; viewer and wrong-key both 403 on `/live`; an edit key
+  passed in the `d=` slot does not authorise (and vice versa); empty/null keys
+  never authorise. Run these against the real DB before trusting a deploy —
+  they were verified against the authorisation layer directly, since no
+  Postgres was available in the environment where the tier was built.
 - edit key and operator key both authorise writes
 - archive → viewer link returns 410 → restore → re-archive → permanent delete
 - export zip returns a valid archive

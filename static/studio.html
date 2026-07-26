@@ -100,8 +100,9 @@ function renderLive(rows){
       <td class="name">${esc(r.name)}</td>
       <td class="when">${when(r.updated_at)}</td>
       <td><div class="rowacts">
-        <button class="btn ghost" data-act="open" data-id="${r.id}" data-k="${r.edit_key}">Open</button>
+        <button class="btn ghost" data-act="open" data-id="${r.id}" data-k="${esc(r.edit_key)}">Open</button>
         <button class="btn ghost" data-act="share" data-id="${r.id}">Copy viewer link</button>
+        <button class="btn ghost" data-act="drive" data-id="${r.id}" data-d="${esc(r.drive_key||"")}">Copy driver link</button>
         <button class="btn ghost" data-act="archive" data-id="${r.id}" data-name="${esc(r.name)}">Archive</button>
       </div></td></tr>`).join("") + `</tbody></table>`;
 }
@@ -134,6 +135,13 @@ document.addEventListener("click", async e => {
     const url = location.origin + "/r/" + id;
     try{ await navigator.clipboard.writeText(url); b.textContent = "Copied"; setTimeout(()=>b.textContent="Copy viewer link",1400); }
     catch(err){ prompt("Viewer link", url); }
+  }
+  if(act === "drive"){
+    // Unlike the viewer link this carries a secret — whoever holds it can
+    // advance and stop cues on a live show, though not edit the content.
+    const url = location.origin + "/r/" + id + "?d=" + encodeURIComponent(b.dataset.d);
+    try{ await navigator.clipboard.writeText(url); b.textContent = "Copied"; setTimeout(()=>b.textContent="Copy driver link",1400); }
+    catch(err){ prompt("Driver link — treat as a password", url); }
   }
   if(act === "archive"){
     if(!confirm(`Archive "${b.dataset.name}"?\n\nThe viewer link stops working. You can restore it later.`)) return;

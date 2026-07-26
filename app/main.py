@@ -45,11 +45,19 @@ CREATE TABLE IF NOT EXISTS rundowns (
     id          TEXT PRIMARY KEY,
     owner_key   TEXT        NOT NULL,
     edit_key    TEXT        NOT NULL,
+    drive_key   TEXT,
     name        TEXT        NOT NULL DEFAULT 'Untitled show',
     data        JSONB       NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Additive, idempotent: on a deployment that already has a rundowns table
+-- (i.e. this ran before the driver-link feature existed), CREATE TABLE IF
+-- NOT EXISTS above is a no-op, so the column has to be added explicitly.
+-- No app-level migration system exists on purpose (see HANDOVER.md) — this
+-- is the one kind of schema change ("add a nullable column, backfill lazily
+-- in the application") that stays compatible with that.
+ALTER TABLE rundowns ADD COLUMN IF NOT EXISTS drive_key TEXT;
 CREATE INDEX IF NOT EXISTS rundowns_owner_idx ON rundowns (owner_key);
 
 CREATE TABLE IF NOT EXISTS archives (
@@ -291,6 +299,24 @@ def can_edit_row(row: asyncpg.Record, k: str, o: str) -> bool:
     return match(k, row["edit_key"]) or match(o, row["owner_key"])
 
 
+async def get_or_create_drive_key(con: asyncpg.Connection, row: asyncpg.Record) -> str:
+    """Rundowns created after the driver-link feature shipped get a
+    drive_key at creation. Ones created before it have NULL here — assign
+    one the first time anybody asks, rather than requiring a migration
+    pass over every existing row."""
+    if row["drive_key"]:
+        return row["drive_key"]
+    key = new_key()
+    await con.execute("UPDATE rundowns SET drive_key = $2 WHERE id = $1", row["id"], key)
+    return key
+
+
+def can_drive_row(row: asyncpg.Record, k: str, o: str, d: str, drive_key: str) -> bool:
+    """Driving is a strict subset of editing — anyone who can edit can also
+    drive. A drive-only key can only ever reach this, never can_edit_row."""
+    return can_edit_row(row, k, o) or match(d, drive_key)
+
+
 # --------------------------------------------------------------------------
 # operator / studio
 # --------------------------------------------------------------------------
@@ -311,13 +337,17 @@ async def create_operator():
 @app.get("/api/studio")
 async def studio(o: str = Query(...)):
     async with pool.acquire() as con:
-        live = await con.fetch(
-            """SELECT id, edit_key, name, updated_at, created_at
+        live_rows = await con.fetch(
+            """SELECT id, edit_key, drive_key, name, updated_at, created_at
                  FROM rundowns WHERE owner_key = $1 ORDER BY updated_at DESC""", o)
+        live = [dict(r) for r in live_rows]
+        for r, row in zip(live, live_rows):
+            if not r["drive_key"]:
+                r["drive_key"] = await get_or_create_drive_key(con, row)
         arc = await con.fetch(
             """SELECT id, name, created_at, archived_at
                  FROM archives WHERE owner_key = $1 ORDER BY archived_at DESC""", o)
-    return {"rundowns": [dict(r) for r in live], "archives": [dict(r) for r in arc]}
+    return {"rundowns": live, "archives": [dict(r) for r in arc]}
 
 
 @app.get("/api/export")
@@ -351,28 +381,34 @@ async def export_all(o: str = Query(...)):
 # --------------------------------------------------------------------------
 @app.post("/api/rundowns")
 async def create_rundown(body: dict, o: str = Query(...)):
-    show_id, key = new_id(), new_key()
+    show_id, key, drive_key = new_id(), new_key(), new_key()
     name = (body.get("name") or "Untitled show").strip()[:120] or "Untitled show"
     data = body.get("data") or {"start": "10:00", "live": None, "shareNotes": False, "items": []}
     async with pool.acquire() as con:
         await con.execute(
-            """INSERT INTO rundowns (id, owner_key, edit_key, name, data)
-               VALUES ($1, $2, $3, $4, $5::jsonb)""",
-            show_id, o, key, name, json.dumps(data))
-    return {"id": show_id, "editKey": key, "name": name}
+            """INSERT INTO rundowns (id, owner_key, edit_key, drive_key, name, data)
+               VALUES ($1, $2, $3, $4, $5, $6::jsonb)""",
+            show_id, o, key, drive_key, name, json.dumps(data))
+    return {"id": show_id, "editKey": key, "driveKey": drive_key, "name": name}
 
 
 @app.get("/api/rundowns/{show_id}")
-async def get_rundown(show_id: str, k: str = Query(default=""), o: str = Query(default="")):
+async def get_rundown(show_id: str, k: str = Query(default=""), o: str = Query(default=""),
+                       d: str = Query(default="")):
     row = await fetch_row(show_id)
     editable = can_edit_row(row, k, o)
+    async with pool.acquire() as con:
+        drive_key = await get_or_create_drive_key(con, row)
+    driveable = editable or match(d, drive_key)
     data = as_dict(row["data"])
     return {
         "id": row["id"],
         "name": row["name"],
         "data": data if editable else strip_for_viewer(data),
         "canEdit": editable,
+        "canDrive": driveable,
         "editKey": row["edit_key"] if editable else None,
+        "driveKey": drive_key if editable else None,
         "updatedAt": row["updated_at"].isoformat(),
         "viewers": hub.count(show_id),
     }
@@ -398,6 +434,37 @@ async def save_rundown(show_id: str, body: dict,
 
     await hub.broadcast(show_id, {"type": "update", "name": name,
                                   "data": strip_for_viewer(data)})
+    return {"ok": True, "updatedAt": updated["updated_at"].isoformat(),
+            "viewers": hub.count(show_id)}
+
+
+@app.put("/api/rundowns/{show_id}/live")
+async def set_live(show_id: str, body: dict, k: str = Query(default=""),
+                    o: str = Query(default=""), d: str = Query(default="")):
+    """Advance, skip, or stop the cue — split out from save_rundown() on
+    purpose, so a driver-only key can move the show forward without ever
+    being able to touch segment content. This only ever writes doc['live'],
+    reconstructed here from the server's own last-saved copy of everything
+    else — a drive key can never smuggle a content change in through this
+    door, even if the client sent one."""
+    row = await fetch_row(show_id)
+    async with pool.acquire() as con:
+        drive_key = await get_or_create_drive_key(con, row)
+        if not can_drive_row(row, k, o, d, drive_key):
+            raise HTTPException(403, "This link can't drive this rundown.")
+
+        live = body.get("live")
+        if live is not None and not isinstance(live, dict):
+            raise HTTPException(400, "Expected a live object or null.")
+
+        data = as_dict(row["data"])
+        data["live"] = live
+        updated = await con.fetchrow(
+            """UPDATE rundowns SET data = $2::jsonb, updated_at = now()
+                WHERE id = $1 RETURNING updated_at""",
+            show_id, json.dumps(data))
+
+    await hub.broadcast(show_id, {"type": "live", "live": live})
     return {"ok": True, "updatedAt": updated["updated_at"].isoformat(),
             "viewers": hub.count(show_id)}
 
@@ -433,9 +500,9 @@ async def restore_rundown(show_id: str, o: str = Query(...)):
             raise HTTPException(404, "No archived rundown with that id.")
         async with con.transaction():
             await con.execute(
-                """INSERT INTO rundowns (id, owner_key, edit_key, name, data, created_at)
-                   VALUES ($1, $2, $3, $4, $5::jsonb, $6)""",
-                arc["id"], arc["owner_key"], new_key(), arc["name"],
+                """INSERT INTO rundowns (id, owner_key, edit_key, drive_key, name, data, created_at)
+                   VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)""",
+                arc["id"], arc["owner_key"], new_key(), new_key(), arc["name"],
                 json.dumps(as_dict(arc["data"])), arc["created_at"])
             await con.execute("DELETE FROM archives WHERE id = $1", show_id)
     return {"ok": True, "id": show_id}
