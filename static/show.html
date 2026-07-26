@@ -32,11 +32,26 @@
      once the window's narrower than that. This is what was blowing the
      page out sideways with no way to scroll back to the missing part. */
   .rowsWrap{overflow-x:auto}
-  /* Last track is 152px, not 118px: a cue row's tools are five 26px icons
-     with 4px gaps = 146px. At 118px they overflowed their own cell on every
-     screen size — invisible on a wide desktop, but it's real overflow and it
-     was part of what pushed the layout off the right edge. */
-  .head,.row{display:grid;grid-template-columns:14px 34px 78px 78px minmax(0,1fr) 150px 152px;align-items:stretch;min-width:0}
+
+  /* Track widths live in variables, not scattered through breakpoints, so a
+     column can never be declared in one place and sized in another.
+     --tools sizes the button block, which differs by ROLE, not by screen:
+     an editor sees five icons (146px), a driver sees only ▶ (26px), a
+     viewer sees none. Getting this wrong is what pushed content off-screen. */
+  body{--tools:152px;--toolsAlt:122px}
+  body.driver{--tools:44px;--toolsAlt:0px}
+  body.viewer{--tools:0px;--toolsAlt:0px}
+
+  .head,.row{display:grid;
+    grid-template-columns:14px 34px 78px 78px minmax(0,1fr) 150px var(--tools);
+    align-items:stretch;min-width:0}
+
+  /* Read-only cells are real text, not disabled <input>s. An input cannot
+     wrap — it truncates mid-word with no way to read the rest, which is
+     exactly how long segment names were getting cut off on tablets. */
+  .ro{display:block;width:100%;padding:4px 6px;white-space:normal;overflow-wrap:anywhere}
+  .ro.dur{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500;white-space:nowrap}
+  .ro.title{font-weight:500}
   .head{border-bottom:1px solid var(--rule);font-family:var(--display);font-size:12px;letter-spacing:.16em;
     text-transform:uppercase;color:var(--muted)}
   .head>div{padding:8px 10px}
@@ -66,7 +81,7 @@
     color:var(--muted);font-size:13px;display:grid;place-items:center}
   .icon:hover{border-color:var(--rule);color:var(--text)}
   .icon.golive:hover{color:var(--live);border-color:var(--live)}
-  .row.heading{grid-template-columns:14px minmax(0,1fr) 122px;background:var(--panel)}
+  .row.heading{grid-template-columns:14px minmax(0,1fr) var(--toolsAlt);background:var(--panel)}
   .row.heading .cell input{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.14em;
     text-transform:uppercase;color:var(--next)}
   .notes{grid-column:5/7;padding-top:0}
@@ -77,7 +92,7 @@
      of continuing from the previous cue's duration — see dayEpoch(). Styled
      like a heading but bolder, since it's a bigger structural moment, and
      carries its own date/time inputs instead of none. */
-  .row.day{grid-template-columns:14px minmax(0,1fr) 210px 122px;background:var(--live);background:rgba(255,68,56,.10);
+  .row.day{grid-template-columns:14px minmax(0,1fr) 210px var(--toolsAlt);background:var(--live);background:rgba(255,68,56,.10);
     border-top:2px solid var(--live);border-bottom:2px solid var(--live)}
   .row.day .cell input.f-title{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.14em;
     text-transform:uppercase;color:var(--live)}
@@ -99,28 +114,39 @@
   body.driver .cell.tools .icon:not(.golive){display:none}
 
   body:not(.viewer):not(.driver) .showname{display:none}
-  /* Raised from 820px to 1024px so tablets get the compact layout too —
-     an iPad in landscape is 1024px and was being handed the full desktop
-     grid, which doesn't fit once the fixed tracks and padding are added up. */
+  /* TABLET — hide the # and Who columns. Start and Length stay: a driver
+     needs to see when the next thing begins.
+     Cells left in a cue row: tally, start, dur, title, tools = 5 tracks.
+     (Before this, `.cell.start` matched nothing — the class was on the inner
+     <span>, not the cell — so Start never actually hid and every narrow
+     layout was declared one track short. Cells then wrapped onto a second
+     line and ran off the edge. Keep these counts and the classes in sync.) */
   @media (max-width:1024px){
     .head{display:none}
-    /* Four tracks, not three. Hiding .num/.start/.who leaves FOUR cells in a
-       cue row — tally, dur, title, tools — so a 3-track grid pushed the tools
-       block onto a second line underneath the tally bar. That was the "side
-       is blocked" symptom: the buttons were wrapping, not just clipping. */
-    /* 152px for cue rows (five icons), 122px for heading/day rows (four). */
-    .row{grid-template-columns:10px 64px minmax(0,1fr) 152px}
-    .row.heading{grid-template-columns:10px minmax(0,1fr) 122px}
-    .row.day{grid-template-columns:10px minmax(0,1fr) 122px}
+    .row{grid-template-columns:10px 62px 62px minmax(0,1fr) var(--tools)}
+    .row.heading{grid-template-columns:10px minmax(0,1fr) var(--toolsAlt)}
+    .row.day{grid-template-columns:10px minmax(0,1fr) var(--toolsAlt)}
     .daytime{display:none}
-    .cell.num,.cell.start,.cell.who{display:none}
-    .notes{grid-column:2/5}
+    .cell.num,.cell.who{display:none}
+    .notes{grid-column:2/6}
     /* Clocks are the other thing wide enough to force the topbar sideways. */
     .clock{min-width:92px;padding:8px 12px}
     .clock .val{font-size:20px}
     .clock.hero{min-width:140px}
     .clock.hero .val{font-size:30px}
     .sharebox input{min-width:140px}
+  }
+
+  /* PHONE — drop the Start column too; the countdown matters more than the
+     clock time when the screen is this small. 4 tracks, 4 cells. */
+  @media (max-width:620px){
+    .row{grid-template-columns:10px 58px minmax(0,1fr) var(--tools)}
+    .cell.start{display:none}
+    .notes{grid-column:2/5}
+    .clock{min-width:78px;padding:6px 10px}
+    .clock .val{font-size:17px}
+    .clock.hero{min-width:112px}
+    .clock.hero .val{font-size:26px}
   }
 </style>
 
@@ -452,12 +478,16 @@ function render(){
   rows.innerHTML = doc.items.map((it,i) => {
     if(it.type === "heading"){
       return `<div class="row heading" data-i="${i}"><div class="tally"></div>
-        <div class="cell"><input class="f-title" value="${escA(it.title||"")}" placeholder="Section name" aria-label="Section name"></div>
+        <div class="cell title">${canEdit
+          ? `<input class="f-title" value="${escA(it.title||"")}" placeholder="Section name" aria-label="Section name">`
+          : `<span class="ro">${esc(it.title||"")}</span>`}</div>
         <div class="cell tools">${tools(i, doc.items.length, false)}</div></div>`;
     }
     if(it.type === "day"){
       return `<div class="row day" data-i="${i}"><div class="tally"></div>
-        <div class="cell"><input class="f-title" value="${escA(it.title||"")}" placeholder="Day label" aria-label="Day label"></div>
+        <div class="cell title">${canEdit
+          ? `<input class="f-title" value="${escA(it.title||"")}" placeholder="Day label" aria-label="Day label">`
+          : `<span class="ro">${esc(it.title||"")}</span>`}</div>
         <div class="cell daytime">
           <input type="date" class="f-day-date" value="${escA(it.date||"")}" aria-label="Date">
           <input class="tin f-day-time" value="${escA(it.time||"09:00")}" aria-label="Start time">
@@ -472,10 +502,16 @@ function render(){
       ? `<div class="cell notes"><textarea class="f-notes" rows="1" placeholder="Notes" aria-label="Notes">${esc(it.notes||"")}</textarea></div>` : "";
     return `<div class="row ${cls}" data-i="${i}"><div class="tally"></div>
       <div class="cell num">${n}</div>
-      <div class="cell"><span class="start">${fmtClock(starts[i])}</span></div>
-      <div class="cell"><input class="dur f-dur" value="${fmtDur(it.dur||0)}" aria-label="Length"></div>
-      <div class="cell"><input class="title f-title" value="${escA(it.title||"")}" placeholder="Segment name" aria-label="Segment name"></div>
-      <div class="cell who"><input class="f-who" value="${escA(it.who||"")}" placeholder="Who" aria-label="Who"></div>
+      <div class="cell start"><span class="start">${fmtClock(starts[i])}</span></div>
+      <div class="cell dur">${canEdit
+        ? `<input class="dur f-dur" value="${fmtDur(it.dur||0)}" aria-label="Length">`
+        : `<span class="ro dur">${fmtDur(it.dur||0)}</span>`}</div>
+      <div class="cell title">${canEdit
+        ? `<input class="title f-title" value="${escA(it.title||"")}" placeholder="Segment name" aria-label="Segment name">`
+        : `<span class="ro title">${esc(it.title||"")}</span>`}</div>
+      <div class="cell who">${canEdit
+        ? `<input class="f-who" value="${escA(it.who||"")}" placeholder="Who" aria-label="Who">`
+        : `<span class="ro">${esc(it.who||"")}</span>`}</div>
       <div class="cell tools">${tools(i, doc.items.length, true)}</div>
       ${notesCell}</div>`;
   }).join("");
