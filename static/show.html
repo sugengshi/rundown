@@ -32,7 +32,11 @@
      once the window's narrower than that. This is what was blowing the
      page out sideways with no way to scroll back to the missing part. */
   .rowsWrap{overflow-x:auto}
-  .head,.row{display:grid;grid-template-columns:14px 34px 78px 78px minmax(0,1fr) 150px 118px;align-items:stretch;min-width:0}
+  /* Last track is 152px, not 118px: a cue row's tools are five 26px icons
+     with 4px gaps = 146px. At 118px they overflowed their own cell on every
+     screen size — invisible on a wide desktop, but it's real overflow and it
+     was part of what pushed the layout off the right edge. */
+  .head,.row{display:grid;grid-template-columns:14px 34px 78px 78px minmax(0,1fr) 150px 152px;align-items:stretch;min-width:0}
   .head{border-bottom:1px solid var(--rule);font-family:var(--display);font-size:12px;letter-spacing:.16em;
     text-transform:uppercase;color:var(--muted)}
   .head>div{padding:8px 10px}
@@ -62,7 +66,7 @@
     color:var(--muted);font-size:13px;display:grid;place-items:center}
   .icon:hover{border-color:var(--rule);color:var(--text)}
   .icon.golive:hover{color:var(--live);border-color:var(--live)}
-  .row.heading{grid-template-columns:14px minmax(0,1fr) 118px;background:var(--panel)}
+  .row.heading{grid-template-columns:14px minmax(0,1fr) 122px;background:var(--panel)}
   .row.heading .cell input{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.14em;
     text-transform:uppercase;color:var(--next)}
   .notes{grid-column:5/7;padding-top:0}
@@ -73,7 +77,7 @@
      of continuing from the previous cue's duration — see dayEpoch(). Styled
      like a heading but bolder, since it's a bigger structural moment, and
      carries its own date/time inputs instead of none. */
-  .row.day{grid-template-columns:14px minmax(0,1fr) 210px 118px;background:var(--live);background:rgba(255,68,56,.10);
+  .row.day{grid-template-columns:14px minmax(0,1fr) 210px 122px;background:var(--live);background:rgba(255,68,56,.10);
     border-top:2px solid var(--live);border-bottom:2px solid var(--live)}
   .row.day .cell input.f-title{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.14em;
     text-transform:uppercase;color:var(--live)}
@@ -95,13 +99,28 @@
   body.driver .cell.tools .icon:not(.golive){display:none}
 
   body:not(.viewer):not(.driver) .showname{display:none}
-  @media (max-width:820px){
+  /* Raised from 820px to 1024px so tablets get the compact layout too —
+     an iPad in landscape is 1024px and was being handed the full desktop
+     grid, which doesn't fit once the fixed tracks and padding are added up. */
+  @media (max-width:1024px){
     .head{display:none}
-    .row,.row.heading{grid-template-columns:10px minmax(0,1fr) 100px}
-    .row.day{grid-template-columns:10px minmax(0,1fr) 100px}
+    /* Four tracks, not three. Hiding .num/.start/.who leaves FOUR cells in a
+       cue row — tally, dur, title, tools — so a 3-track grid pushed the tools
+       block onto a second line underneath the tally bar. That was the "side
+       is blocked" symptom: the buttons were wrapping, not just clipping. */
+    /* 152px for cue rows (five icons), 122px for heading/day rows (four). */
+    .row{grid-template-columns:10px 64px minmax(0,1fr) 152px}
+    .row.heading{grid-template-columns:10px minmax(0,1fr) 122px}
+    .row.day{grid-template-columns:10px minmax(0,1fr) 122px}
     .daytime{display:none}
     .cell.num,.cell.start,.cell.who{display:none}
-    .notes{grid-column:2/4}
+    .notes{grid-column:2/5}
+    /* Clocks are the other thing wide enough to force the topbar sideways. */
+    .clock{min-width:92px;padding:8px 12px}
+    .clock .val{font-size:20px}
+    .clock.hero{min-width:140px}
+    .clock.hero .val{font-size:30px}
+    .sharebox input{min-width:140px}
   }
 </style>
 

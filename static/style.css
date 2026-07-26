@@ -7,7 +7,12 @@
   --mono:"IBM Plex Mono",ui-monospace,monospace;
 }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+/* Deliberately NOT overflow-x:hidden here. Hiding the overflow doesn't make
+   content fit — it clips it and removes the scrollbar that would have let
+   you reach it, which is strictly worse than an ugly horizontal scroll.
+   Anything that genuinely can't fit gets its own scroll container instead
+   (see .rowsWrap in show.html). */
+html,body{margin:0;padding:0;max-width:100%}
 body{background:var(--base);color:var(--text);font-family:var(--body);font-size:14px;-webkit-font-smoothing:antialiased}
 a{color:var(--focus)}
 button{font-family:inherit;color:inherit;cursor:pointer}
