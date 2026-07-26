@@ -59,7 +59,7 @@
   .row{border-bottom:1px solid rgba(38,62,73,.55);transition:background .12s ease}
   .row:hover{background:rgba(28,47,56,.5)}
   .row.done{color:var(--done)}
-  .row.done .cell input,.row.done .cell textarea{color:var(--done)}
+  .row.done .cell input,.row.done .cell textarea,.row.done .cell .ro{color:var(--done)}
   .row.live{background:rgba(255,68,56,.09)}
   .row.next{background:rgba(255,194,75,.06)}
   .tally{background:#0B1418;border-right:1px solid var(--rule)}
@@ -75,15 +75,17 @@
   .cell .start{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
   .cell input.dur{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500}
   .cell input.title{font-weight:500}
-  .cell.who input{color:var(--muted);font-size:13px}
+  .cell.who input,.cell.who .ro{color:var(--muted);font-size:13px}
   .cell.tools{gap:4px;justify-content:flex-end}
   .icon{background:transparent;border:1px solid transparent;border-radius:3px;width:26px;height:26px;
     color:var(--muted);font-size:13px;display:grid;place-items:center}
   .icon:hover{border-color:var(--rule);color:var(--text)}
   .icon.golive:hover{color:var(--live);border-color:var(--live)}
   .row.heading{grid-template-columns:14px minmax(0,1fr) var(--toolsAlt);background:var(--panel)}
-  .row.heading .cell input{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.14em;
-    text-transform:uppercase;color:var(--next)}
+  /* Must match BOTH the editor's <input> and the read-only <span>, or section
+     headers lose their styling for viewers and drivers. Same for .row.day. */
+  .row.heading .cell input,.row.heading .cell .ro{font-family:var(--display);font-size:16px;font-weight:600;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--next)}
   .notes{grid-column:5/7;padding-top:0}
   .notes textarea{color:var(--muted);font-size:13px;min-height:22px}
   .addbar{display:flex;gap:8px;padding:14px 0}
@@ -94,8 +96,8 @@
      carries its own date/time inputs instead of none. */
   .row.day{grid-template-columns:14px minmax(0,1fr) 210px var(--toolsAlt);background:var(--live);background:rgba(255,68,56,.10);
     border-top:2px solid var(--live);border-bottom:2px solid var(--live)}
-  .row.day .cell input.f-title{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.14em;
-    text-transform:uppercase;color:var(--live)}
+  .row.day .cell input.f-title,.row.day .cell .ro{font-family:var(--display);font-size:16px;font-weight:600;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--live)}
   .daytime{display:flex;gap:6px;align-items:center}
   .daytime input[type=date]{background:var(--panel);border:1px solid var(--rule);border-radius:4px;
     padding:6px 8px;font-family:var(--mono);font-size:12px;color:var(--text);color-scheme:dark}
@@ -123,12 +125,14 @@
      line and ran off the edge. Keep these counts and the classes in sync.) */
   @media (max-width:1024px){
     .head{display:none}
-    .row{grid-template-columns:10px 62px 62px minmax(0,1fr) var(--tools)}
+    /* Only the # column goes at tablet size — Who still fits and is worth
+       keeping, since it tells the driver whose segment is coming up. */
+    .row{grid-template-columns:10px 62px 62px minmax(0,1fr) 120px var(--tools)}
     .row.heading{grid-template-columns:10px minmax(0,1fr) var(--toolsAlt)}
     .row.day{grid-template-columns:10px minmax(0,1fr) var(--toolsAlt)}
     .daytime{display:none}
-    .cell.num,.cell.who{display:none}
-    .notes{grid-column:2/6}
+    .cell.num{display:none}
+    .notes{grid-column:4/6}
     /* Clocks are the other thing wide enough to force the topbar sideways. */
     .clock{min-width:92px;padding:8px 12px}
     .clock .val{font-size:20px}
@@ -141,8 +145,8 @@
      clock time when the screen is this small. 4 tracks, 4 cells. */
   @media (max-width:620px){
     .row{grid-template-columns:10px 58px minmax(0,1fr) var(--tools)}
-    .cell.start{display:none}
-    .notes{grid-column:2/5}
+    .cell.start,.cell.who{display:none}
+    .notes{grid-column:3/5}
     .clock{min-width:78px;padding:6px 10px}
     .clock .val{font-size:17px}
     .clock.hero{min-width:112px}
