@@ -164,6 +164,7 @@
     <div class="clock"><div class="lab">On now</div><div class="val" id="cNow" style="font-size:16px;font-family:var(--body);font-weight:500">Standby</div></div>
     <div class="clock"><div class="lab">Drift</div><div class="val" id="cDrift">00:00</div></div>
     <div class="clock"><div class="lab">Show left</div><div class="val" id="cLeft">—</div></div>
+    <div class="clock"><div class="lab">Est. finish</div><div class="val" id="cFinish">—</div></div>
     <div class="clock"><div class="lab">Time of day</div><div class="val" id="cWall">—</div></div>
   </div>
   <div class="transport">
@@ -321,6 +322,18 @@ function currentDaySegment(){
   if(!active) return [0, days[0].idx];
   const nxt = days.find(dd => dd.idx > active.idx);
   return [active.idx+1, nxt ? nxt.idx : doc.items.length];
+}
+// The finish time today's segment was scheduled for, as a plain epoch — no
+// live cue, no drift, just "if every cue runs exactly as long as planned."
+// This is the reference point "Est. finish" measures itself against.
+function segmentPlannedEnd(){
+  const [segStart, segEnd] = currentDaySegment();
+  const starts = plannedStarts(doc);
+  let total = 0;
+  for(let i=segStart;i<segEnd;i++) if(doc.items[i].type==="cue") total += (doc.items[i].dur||0);
+  const anchor = segStart < doc.items.length ? starts[segStart]
+    : (starts.length ? starts[starts.length-1] : doc.startEpoch);
+  return anchor + total*1000;
 }
 // Anchors doc.start ("HH:MM", still the editable field) to a real instant:
 // today, in whichever timezone the operator's own device is in, at that
@@ -542,7 +555,9 @@ function tick(){
   const d = new Date(now());
   const pad = n => String(n).padStart(2,"0");
   $("cWall").textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  const dot=$("tallyDot"), remainEl=$("cRemain"), nowEl=$("cNow"), driftEl=$("cDrift"), leftEl=$("cLeft");
+  const dot=$("tallyDot"), remainEl=$("cRemain"), nowEl=$("cNow"), driftEl=$("cDrift"),
+        leftEl=$("cLeft"), finishEl=$("cFinish");
+  const plannedFinish = doc.items.length ? segmentPlannedEnd() : null;
 
   if(!doc.live){
     dot.style.background="var(--done)"; dot.style.boxShadow="none";
@@ -555,6 +570,10 @@ function tick(){
     let total = 0;
     for(let i=segStart;i<segEnd;i++) if(doc.items[i].type==="cue") total += doc.items[i].dur||0;
     leftEl.textContent = fmtDur(total);
+    // No live cue means no drift to project yet — show the scheduled finish
+    // plainly, neutral colour, same number "Show left" is built from.
+    finishEl.textContent = plannedFinish ? fmtClock(plannedFinish) : "—";
+    finishEl.className = "val";
     return;
   }
   dot.style.background="var(--live)"; dot.style.boxShadow="0 0 10px var(--live)";
@@ -579,6 +598,17 @@ function tick(){
   let left = Math.max(0, remain);
   for(let i=idx+1;i<segEnd;i++) if(doc.items[i].type==="cue") left += (doc.items[i].dur||0);
   leftEl.textContent = fmtDur(left);
+
+  // Est. finish = right now, plus everything still to run — `left` already
+  // carries today's overrun/underrun from the live cue. Future cues are
+  // still assumed to run exactly their planned length; only the live cue's
+  // actual drift shifts the projection. Coloured against the ORIGINAL
+  // scheduled finish (not against zero), so "running 5 min over on this
+  // cue" shows up here as "finishing 5 min later than planned."
+  const estFinish = now() + left*1000;
+  finishEl.textContent = fmtClock(estFinish);
+  const finishDelta = plannedFinish ? (estFinish - plannedFinish)/1000 : 0;
+  finishEl.className = "val " + (finishDelta>30?"over":finishDelta<-30?"under":"");
 }
 setInterval(tick, 250);
 
