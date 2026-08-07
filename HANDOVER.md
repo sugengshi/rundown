@@ -167,6 +167,53 @@ For broadcast, invert this.
 - **Colour-coded cues** — costs legibility in a dim room.
 - **Teleprompter** — a separate tool; cramming it in makes both worse.
 - **Real accounts** — see open threads.
+- **Live Google Sheets connection (OAuth)** — considered when Sheets import
+  was requested, rejected the same day. An OAuth app, per-operator stored
+  tokens, and a hard dependency on Google's API staying reachable is a lot of
+  permanent surface area for a feature used a handful of times per event.
+  Paste-import (see below) gets the same job done with zero credentials and
+  zero new dependencies — the entire feature is string parsing plus a diff.
+
+---
+
+### Sheets import (paste + diff), added 2026-07-26
+
+"Import" and "detect changes and update" turned out to be the same feature,
+not two: paste is diffed against `doc.items` using a classic LCS match keyed
+on `(type, title)`, and importing into an empty rundown is just the case
+where everything comes back as "added." There's a preview step
+(`diffAgainstDoc()` → `renderImportPreview()`) before anything touches the
+live document — added/changed/removed, with per-field before→after on
+changed rows.
+
+Things that matter if this gets touched again:
+
+- **Matching is positional-aware, not a naive title lookup.** The real KUK
+  Jakarta rundown has three cues literally named "Break." A hashmap keyed on
+  title would collide; LCS aligns repeated equal elements in the order they
+  appear in both sequences, so the 1st "Break" in the paste matches the 1st
+  "Break" already in the rundown, not whichever one a lookup happened to
+  find. Tested directly — see `mergeDraftIntoItem`/`diffAgainstDoc` tests
+  before this shipped.
+- **Existing item ids are preserved on a match**, only the changed fields get
+  overwritten. This is why an in-progress live cue survives a content
+  update — `doc.live.itemId` still points at something real after import,
+  instead of the whole document getting swapped for freshly-generated ids.
+- **Day breaks are structurally excluded from the diff**, not just
+  unsupported in the parser. `splitDayBreaks()`/`reinsertDayBreaks()` pull
+  them out before comparison and stitch them back at the same relative
+  position (anchored to the id of whichever item preceded them) afterward.
+  Without this, every existing day break would show up as "removed" on
+  every single import, since the paste format has no date field to express
+  one. If you ever add a "Type: day" column to the export/import format,
+  this whole carve-out can go away — until then, don't let day items
+  anywhere near the diff.
+- **Start is parsed but discarded.** It's a derived field everywhere else in
+  the app (`plannedStarts()` computes it from `startEpoch` + cumulative
+  durations); accepting it from a paste and treating it as authoritative
+  would silently reintroduce the exact per-item-wall-clock model the
+  timezone fix removed. Length is what's real; Start is just re-derived
+  after import the same as after any manual edit.
 
 ---
 

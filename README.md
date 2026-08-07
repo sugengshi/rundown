@@ -60,6 +60,30 @@ in the page source. Flip **Show notes to viewers** on the rundown page if you
 want them shared. Everything else in a rundown is readable by anyone with the
 link. That's what a public viewer link means.
 
+## Importing from Google Sheets
+
+There's no live connection to Google Sheets on purpose — that would mean an
+OAuth app, stored tokens, and a dependency on Google's API staying up, for a
+feature used a handful of times a year. Instead: select your rows in Sheets,
+copy, and click **Import from Sheets** on the rundown page to paste them in.
+
+Column order matches **Export CSV** exactly — Start, Length, Type, Segment,
+Who, Notes — with or without a header row. **Start is ignored on import**; it's
+always recalculated from the show's start time and each segment's length, the
+same as it would be if you typed the durations in by hand. Editing the Start
+column in your sheet does nothing, by design.
+
+This isn't just a one-shot create. Paste into a rundown that already has
+content and **Preview changes** shows you exactly what importing would do —
+added rows, removed rows, and which fields changed on existing ones — before
+anything is touched. Matching is by segment type and title, so reordering
+rows in the sheet, or having several segments named "Break," doesn't confuse
+it into deleting and re-adding things that didn't actually change.
+
+**Day breaks can't be imported this way** — the paste format has no date
+field to represent one. Any day breaks already in the rundown are left
+exactly where they are; the import only ever touches segments and headings.
+
 ## Multi-day events
 
 One rundown can cover a whole multi-day event instead of needing a separate

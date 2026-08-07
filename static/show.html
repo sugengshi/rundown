@@ -26,6 +26,23 @@
     border-radius:4px;padding:8px 10px;margin-bottom:16px;flex-wrap:wrap}
   .sharebox input{flex:1;min-width:220px;background:transparent;border:0;font-family:var(--mono);font-size:12px;color:var(--focus)}
 
+  .importbox{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:14px;margin-bottom:16px}
+  .importbox .hint{margin:0 0 10px}
+  #importText{width:100%;background:var(--panel-2);border:1px solid var(--rule);border-radius:4px;color:var(--text);
+    font-family:var(--mono);font-size:12px;padding:8px;resize:vertical}
+  .importbar{display:flex;gap:8px;padding-top:10px}
+  .diffsum{display:flex;gap:14px;flex-wrap:wrap;padding:12px 0 4px;font-family:var(--display);
+    font-size:12px;letter-spacing:.1em;text-transform:uppercase}
+  .diffsum b{font-family:var(--mono);letter-spacing:0;text-transform:none;font-size:14px}
+  .diffgroup{margin-top:10px}
+  .diffgroup h4{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+  .diffrow{font-size:13px;padding:3px 0;border-bottom:1px solid rgba(38,62,73,.4)}
+  .diffrow .field{color:var(--muted);font-family:var(--mono);font-size:12px;margin-left:6px}
+  .diffrow.add{color:var(--ok)}
+  .diffrow.remove{color:var(--live);text-decoration:line-through;text-decoration-color:rgba(255,68,56,.5)}
+  .diffrow.change{color:var(--next)}
+  .diffwarn{color:var(--next);font-size:12px;margin-top:10px}
+
   /* minmax(0,...) rather than a bare 1fr — a plain 1fr track can't shrink
      past the natural min-content width of what's inside it (an <input>
      has a non-trivial one), so the grid quietly overflows its container
@@ -103,15 +120,15 @@
     padding:6px 8px;font-family:var(--mono);font-size:12px;color:var(--text);color-scheme:dark}
 
   body.viewer .shelf,body.viewer .addbar,body.viewer .transport,
-  body.viewer .cell.tools,body.viewer .sharebox{display:none}
+  body.viewer .cell.tools,body.viewer .sharebox,body.viewer .importbox{display:none}
   body.viewer .cell input,body.viewer .cell textarea{pointer-events:none;border-color:transparent!important}
 
   /* Driver: transport (top Go/Stop, and each row's ▶) stays live. Content
      editing — the shelf, add-row bar, per-row reorder/duplicate/delete, the
-     link-sharing box — is inert, same as a viewer. Enforced again
+     link-sharing box, import — is inert, same as a viewer. Enforced again
      server-side regardless of what this CSS hides; see set_live() in
      app/main.py. */
-  body.driver .shelf,body.driver .addbar,body.driver .sharebox{display:none}
+  body.driver .shelf,body.driver .addbar,body.driver .sharebox,body.driver .importbox{display:none}
   body.driver .cell input,body.driver .cell textarea{pointer-events:none;border-color:transparent!important}
   body.driver .cell.tools .icon:not(.golive){display:none}
 
@@ -181,7 +198,24 @@
     <label class="lab" for="inStart">Show starts</label>
     <input class="tin" id="inStart" value="10:00">
     <label class="toggle"><input type="checkbox" id="chkNotes"> Show notes to viewers</label>
+    <button class="btn ghost" id="btnImport">Import from Sheets</button>
     <button class="btn ghost" id="btnCsv">Export CSV</button>
+  </div>
+
+  <div class="importbox" id="importBox" hidden>
+    <p class="hint">Select your rows in Google Sheets, copy, and paste below. Same column
+      order as <b>Export CSV</b> — Start, Length, Type, Segment, Who, Notes — with or
+      without a header row. <b>Start is ignored</b>; it's always recalculated from the
+      show's start time and each segment's length, same as typing durations in by hand.
+      <b>Day breaks aren't importable this way</b> — any already in this rundown are left
+      untouched; add new ones directly.</p>
+    <textarea id="importText" rows="8" placeholder="Paste rows here…"></textarea>
+    <div class="importbar">
+      <button class="btn" id="btnImportPreview">Preview changes</button>
+      <button class="btn primary" id="btnImportApply" disabled>Apply</button>
+      <button class="btn ghost" id="btnImportCancel">Cancel</button>
+    </div>
+    <div id="importDiff"></div>
   </div>
 
   <div class="sharebox">
@@ -259,6 +293,121 @@ function fmtDur(sec){
   return (neg?"−":"") + (h ? h+":"+pad(m)+":"+pad(s) : pad(m)+":"+pad(s));
 }
 const parseClock = s => { const p=String(s||"0").split(":").map(n=>parseInt(n,10)||0); return (p[0]||0)*3600+(p[1]||0)*60+(p[2]||0); };
+
+/* ---------- import from Sheets ---------- */
+// Splits pasted text into raw cell rows. Google Sheets copies a cell range
+// as tab-separated text, so that's tried first; a lone comma-separated
+// paste (e.g. from a CSV opened as plain text) still works via a minimal
+// quoted-field splitter — the same shape Export CSV writes, so round-tripping
+// an exported file back in works too.
+function parsePastedRows(text){
+  const lines = String(text||"").split(/\r\n|\r|\n/).filter(l => l.trim() !== "");
+  if(!lines.length) return [];
+  const tab = lines[0].includes("\t");
+  const splitCsv = l => {
+    const out=[]; let cur="", inQ=false;
+    for(let i=0;i<l.length;i++){
+      const c=l[i];
+      if(inQ){
+        if(c==='"'){ if(l[i+1]==='"'){cur+='"'; i++;} else inQ=false; }
+        else cur+=c;
+      } else if(c===','){ out.push(cur); cur=""; }
+      else if(c==='"' && cur===""){ inQ=true; }
+      else cur+=c;
+    }
+    out.push(cur);
+    return out;
+  };
+  let rows = lines.map(l => (tab ? l.split("\t") : splitCsv(l)).map(c=>c.trim()));
+  // Column order fixed to match Export CSV: Start, Length, Type, Segment, Who, Notes.
+  const HEAD = ["start","length","type","segment","who","notes"];
+  if(rows[0].some(c => HEAD.includes(c.toLowerCase()))) rows = rows.slice(1);
+  return rows
+    .map(c => ({ lenRaw:c[1]||"", type:(c[2]||"cue").trim().toLowerCase()||"cue", title:c[3]||"", who:c[4]||"", notes:c[5]||"" }))
+    .filter(r => r.title.trim() !== "");
+}
+// Raw rows -> draft items ready to diff. "day" rows are skipped, not
+// guessed at — a day break needs a real date, which nothing in the paste
+// format carries (Start is just "HH:MM", not a date). Reporting them back
+// as skipped is the honest choice over silently dropping or misdating them.
+function rowsToDrafts(rawRows){
+  const drafts=[], skipped=[];
+  for(const r of rawRows){
+    if(r.type === "day"){ skipped.push(r.title || "(untitled)"); continue; }
+    const type = r.type === "heading" ? "heading" : "cue";
+    drafts.push(type==="heading"
+      ? { type, title:r.title }
+      : { type, title:r.title, who:r.who, notes:r.notes, dur:parseDur(r.lenRaw) });
+  }
+  return { drafts, skipped };
+}
+const importKey = it => (it.type||"cue") + " " + String(it.title||"").trim().toLowerCase();
+// Day breaks can't appear in a paste (see rowsToDrafts), so they're pulled
+// out before diffing and stitched back in afterward at the same relative
+// position — anchored to the id of whichever diffable item preceded them —
+// rather than left in the comparison, where they'd show up as spuriously
+// "removed" every single time just because the pasted sheet never
+// mentions them.
+function splitDayBreaks(items){
+  const diffable=[], dayMeta=[];
+  let lastId=null;
+  for(const it of items){
+    if(it.type==="day") dayMeta.push({item:it, afterId:lastId});
+    else { diffable.push(it); lastId = it.id; }
+  }
+  return {diffable, dayMeta};
+}
+function reinsertDayBreaks(items, dayMeta){
+  let headIdx = 0;
+  for(const {item, afterId} of dayMeta){
+    if(afterId===null){ items.splice(headIdx,0,item); headIdx++; continue; }
+    const idx = items.findIndex(it => it.id===afterId);
+    if(idx===-1) items.push(item);           // its anchor got removed by the diff — never drop it silently
+    else items.splice(idx+1,0,item);
+  }
+  return items;
+}
+function mergeDraftIntoItem(oldItem, draft){
+  const item = {...oldItem, title:draft.title};
+  const fields = [];
+  if(draft.type==="cue"){
+    if((oldItem.who||"")   !== (draft.who||""))   { fields.push({name:"who",who:1,   from:oldItem.who||"—",           to:draft.who||"—"});           item.who=draft.who; }
+    if((oldItem.notes||"") !== (draft.notes||"")) { fields.push({name:"notes",       from:oldItem.notes||"—",         to:draft.notes||"—"});         item.notes=draft.notes; }
+    if((oldItem.dur||0)    !== (draft.dur||0))    { fields.push({name:"length",      from:fmtDur(oldItem.dur||0),     to:fmtDur(draft.dur||0)});      item.dur=draft.dur; }
+  }
+  return {item, fields};
+}
+function draftToNewItem(draft){
+  return draft.type==="heading"
+    ? { id:rid(), type:"heading", title:draft.title }
+    : { id:rid(), type:"cue", title:draft.title, who:draft.who||"", notes:draft.notes||"", dur:draft.dur||0 };
+}
+// Classic LCS diff, keyed on (type, title). Handles duplicate titles
+// correctly — e.g. three cues all named "Break" — because LCS aligns
+// repeated equal elements in the order they appear in both sequences,
+// rather than an arbitrary title→row lookup that would just collide.
+function diffAgainstDoc(existingItems, drafts){
+  const {diffable, dayMeta} = splitDayBreaks(existingItems);
+  const n=diffable.length, m=drafts.length;
+  const dp = Array.from({length:n+1}, () => new Array(m+1).fill(0));
+  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--)
+    dp[i][j] = importKey(diffable[i])===importKey(drafts[j]) ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j], dp[i][j+1]);
+  const result=[], added=[], removed=[], changed=[]; let unchanged=0;
+  let i=0, j=0;
+  while(i<n && j<m){
+    if(importKey(diffable[i])===importKey(drafts[j])){
+      const {item, fields} = mergeDraftIntoItem(diffable[i], drafts[j]);
+      result.push(item);
+      if(fields.length) changed.push({title:drafts[j].title, type:drafts[j].type, fields});
+      else unchanged++;
+      i++; j++;
+    } else if(dp[i+1][j] >= dp[i][j+1]){ removed.push(diffable[i]); i++; }
+    else { result.push(draftToNewItem(drafts[j])); added.push(drafts[j]); j++; }
+  }
+  while(i<n){ removed.push(diffable[i]); i++; }
+  while(j<m){ result.push(draftToNewItem(drafts[j])); added.push(drafts[j]); j++; }
+  return { items: reinsertDayBreaks(result, dayMeta), added, removed, changed, unchanged };
+}
 
 // Cue start times used to be "seconds since midnight", re-interpreted against
 // whichever device happened to be looking at the page. That's the timezone
@@ -731,6 +880,70 @@ $("btnCsv").onclick = () => {
   const a = document.createElement("a");
   a.href = url; a.download = name.replace(/[^\w -]/g,"") + ".csv"; a.click();
   URL.revokeObjectURL(url);
+};
+
+/* ---------- import from Sheets ---------- */
+let pendingImport = null;
+function closeImportBox(){
+  $("importBox").hidden = true;
+  $("importText").value = "";
+  $("importDiff").innerHTML = "";
+  $("btnImportApply").disabled = true;
+  pendingImport = null;
+}
+function renderImportPreview(result, skipped){
+  const el = $("importDiff");
+  const parts = [];
+  parts.push(`<div class="diffsum">
+    <span><b>${result.added.length}</b> added</span>
+    <span><b>${result.changed.length}</b> changed</span>
+    <span><b>${result.removed.length}</b> removed</span>
+    <span><b>${result.unchanged}</b> unchanged</span>
+  </div>`);
+  if(result.added.length){
+    parts.push(`<div class="diffgroup"><h4>Added</h4>` +
+      result.added.map(d => `<div class="diffrow add">+ ${esc(d.title)}</div>`).join("") + `</div>`);
+  }
+  if(result.changed.length){
+    parts.push(`<div class="diffgroup"><h4>Changed</h4>` +
+      result.changed.map(c => `<div class="diffrow change">${esc(c.title)}` +
+        c.fields.map(f => `<span class="field">${f.name}: ${esc(f.from)} → ${esc(f.to)}</span>`).join("") +
+        `</div>`).join("") + `</div>`);
+  }
+  if(result.removed.length){
+    parts.push(`<div class="diffgroup"><h4>Removed</h4>` +
+      result.removed.map(it => `<div class="diffrow remove">− ${esc(it.title)}</div>`).join("") + `</div>`);
+  }
+  if(skipped.length){
+    parts.push(`<div class="diffwarn">Skipped (day breaks aren't importable — add directly in the rundown): ${skipped.map(esc).join(", ")}</div>`);
+  }
+  if(!result.added.length && !result.changed.length && !result.removed.length){
+    parts.push(`<div class="diffwarn">No differences — this rundown already matches what you pasted.</div>`);
+  }
+  el.innerHTML = parts.join("");
+}
+$("btnImport").onclick = () => { if(!canEdit) return; $("importBox").hidden = false; $("importText").focus(); };
+$("btnImportCancel").onclick = closeImportBox;
+$("btnImportPreview").onclick = () => {
+  if(!canEdit) return;
+  const { drafts, skipped } = rowsToDrafts(parsePastedRows($("importText").value));
+  if(!drafts.length && !skipped.length){
+    banner("Nothing recognisable in that paste — check it's copied straight from the sheet.", "bad");
+    return;
+  }
+  pendingImport = diffAgainstDoc(doc.items, drafts);
+  renderImportPreview(pendingImport, skipped);
+  $("btnImportApply").disabled = false;
+};
+$("btnImportApply").onclick = () => {
+  if(!canEdit || !pendingImport) return;
+  const liveRemoved = doc.live && pendingImport.removed.some(it => it.id === doc.live.itemId);
+  doc.items = pendingImport.items;
+  if(liveRemoved) doc.live = null;
+  const summary = `Imported: ${pendingImport.added.length} added, ${pendingImport.changed.length} changed, ${pendingImport.removed.length} removed.`;
+  save(true); render();
+  closeImportBox();
+  banner(summary, "good");
 };
 
 /* ---------- boot ---------- */
