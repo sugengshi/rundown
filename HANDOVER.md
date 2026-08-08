@@ -102,6 +102,70 @@ and an operator both hitting Go, will fight. Single caller by design.
 
 This is the section that matters. Each of these was argued and settled.
 
+### Live-adjusted Start times, added 2026-08-08
+
+"Can the start time of a session adjust according to the real ending time
+of the previous session" — asked right after actual-duration history
+shipped, and it turns out that feature already had everything this one
+needs: `doc.history` records exactly when each cue really started and
+ended. The gap was that the Start column never read it — it was purely
+`plannedStarts()`, the flat original schedule, forever.
+
+Two design forks were confirmed with the operator before building, since
+guessing wrong here means every row's timestamp is wrong, not just one
+badge:
+
+1. **Completed segments show their REAL start**, not the original plan.
+   `doc.history`'s `startedAt` for a cue's most recent run *is* its Start
+   value now — it's not being computed or projected, it's a fact already on
+   hand.
+2. **Segments that haven't run yet keep shifting, live**, not just once a
+   cue formally ends. `displayStarts()` re-runs every 250ms via `tick()`
+   alongside Drift and Est. finish, so a segment 8 minutes into a 5-minute
+   overrun visibly pushes every later Start back in real time, the same way
+   the countdown does — not frozen until someone presses Next.
+
+**`plannedStarts()` was deliberately left untouched — `displayStarts()` is
+a new, separate function, only used for the on-screen Start column.**
+Three other things still need the flat, non-drifting schedule and would
+quietly break if it started moving: Drift (`plannedEpoch` in `tick()` is
+"what SHOULD have happened," and drift is measured against it — if the
+schedule itself absorbed the drift, Drift would read close to zero forever,
+which defeats the number); `segmentPlannedEnd()`, the reference "Est.
+finish" measures itself against; and CSV export, which archives what was
+*planned*, not a live projection frozen at export time — the `Actual`
+column (see below) is where the archive's real timing already lives.
+If you ever consider merging these two functions, re-read this paragraph
+first.
+
+What `displayStarts()` actually does, cue by cue, in list order:
+
+- **The live cue**: Start = `doc.live.startedAt` (fact, already known).
+  Anchor for whatever's next = `now() + max(0, plannedDur − elapsed)` —
+  identical arithmetic to `leftEl`/`finishEl` in `tick()`, so a cue running
+  long projects its neighbor to start "right now," clamped, never negative.
+- **A cue with a history entry, not currently live**: Start = that entry's
+  real `startedAt`; anchor for next = that entry's real `endedAt`. This is
+  true whether the cue is positionally before or after the live cue — a
+  driver jumping backward and re-running an earlier cue updates that cue's
+  own Start on its next completion, same as anywhere else; nothing special
+  is done to "future" cues that happen to already have history from an
+  earlier pass.
+- **Anything else (never run, not live)**: falls back to the flat
+  plan — current anchor, then anchor advances by the cue's own planned
+  duration. Exactly `plannedStarts()`'s behavior, for exactly the part of
+  the show that hasn't happened yet.
+- **A day break**: still an unconditional reset to its own date/time,
+  regardless of how much drift accumulated before it — same as
+  `plannedStarts()`. Confirmed with a wildly-overrun cue immediately before
+  a day break: the break, and everything after it, ignores that drift
+  entirely. This wasn't re-litigated; it's the same reasoning multi-day
+  events already established.
+- Start cells are rendered as a read-only `<span>` in every role (editor,
+  driver, viewer) — never an `<input>` — specifically so `tick()` can
+  overwrite their `textContent` every 250ms without any risk of clobbering
+  something someone's mid-typing elsewhere in the row.
+
 ### Actual-duration history, added 2026-08-08
 
 "Show the time used for each past session" — scoped down to per-segment,
@@ -394,6 +458,16 @@ were actually run:
   segment's own badge, and `fmtDur` stays consistent. The existing Sheets
   import/diff test suite was re-run after this change and still passes in
   full — nothing in the render/CSV path regressed it.
+- **live-adjusted Start times (2026-08-08):** `displayStarts()` matches
+  `plannedStarts()` exactly when nothing has run and nothing is live (no
+  behavior change before a show starts); a completed cue shows its
+  real recorded start and the next cue anchors off its real end, not the
+  plan; a live cue shows its own real start and projects a later cue from
+  `now() + remaining`; an overrunning live cue clamps that projection to
+  "now," never negative; a day break still resets the anchor outright even
+  immediately after a wildly-overrun cue, ignoring accumulated drift
+  entirely, same as before this feature existed. The Sheets import/diff
+  suite was re-run again after this change and still passes in full.
 
 If you change the permission logic, re-run these. The notes-stripping one is
 the one that silently causes real harm if it regresses.

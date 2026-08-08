@@ -464,6 +464,43 @@ function plannedStarts(d){
   }
   return out;
 }
+// Like plannedStarts(), but not pinned to the original schedule: a cue
+// that has already run shows the REAL clock time it started (from
+// doc.history), and the real time it ended becomes the anchor for
+// whatever's next; the live cue shows its own real start and projects
+// forward using how much of its planned length is actually left — the same
+// overrun/underrun math Est. finish already does in aggregate; only cues
+// that haven't happened yet fall back to the flat plan, anchored off
+// whatever real timestamp is most recent. This is what the Start column
+// renders. plannedStarts() itself stays untouched — Drift, Est. finish's
+// reference point, and the CSV archive all need a stable, non-drifting
+// schedule to measure "how far off" against, and would break if the thing
+// they're comparing against started moving too.
+function displayStarts(d){
+  const liveIdx = d.live ? d.items.findIndex(i => i.id === d.live.itemId) : -1;
+  let t = d.startEpoch, out = [];
+  for(let i=0;i<d.items.length;i++){
+    const it = d.items[i];
+    if(it.type==="day"){ t = dayEpoch(it, t); out.push(t); continue; }
+    if(it.type!=="cue"){ out.push(t); continue; }
+    if(i === liveIdx){
+      out.push(d.live.startedAt);
+      const elapsed = (now() - d.live.startedAt)/1000;
+      t = now() + Math.max(0, (it.dur||0) - elapsed)*1000;
+      continue;
+    }
+    const entries = (d.history||[]).filter(h => h.itemId===it.id);
+    if(entries.length){
+      const h = entries[entries.length-1];
+      out.push(h.startedAt);
+      t = h.endedAt;
+      continue;
+    }
+    out.push(t);
+    t += (it.dur||0)*1000;
+  }
+  return out;
+}
 // Which slice of doc.items counts as "today" right now, for the Show-left
 // clock. With no day breaks this is the whole rundown, unchanged from
 // before. With day breaks, it's the segment between whichever day-break's
@@ -694,7 +731,11 @@ function render(){
     rows.innerHTML = `<div class="empty">Nothing in this rundown yet.</div>`;
     tick(); return;
   }
-  const starts = plannedStarts(doc);
+  // displayStarts(), not plannedStarts() — the Start column shows reality
+  // where it's known (completed/live cues) and a live-projected estimate
+  // where it isn't (upcoming cues), not the flat original plan. tick()
+  // refreshes these spans every 250ms on its own after this initial paint.
+  const starts = displayStarts(doc);
   const liveIdx = doc.live ? doc.items.findIndex(i => i.id === doc.live.itemId) : -1;
   let n = 0;
   rows.innerHTML = doc.items.map((it,i) => {
@@ -763,6 +804,24 @@ function tick(){
   const dot=$("tallyDot"), remainEl=$("cRemain"), nowEl=$("cNow"), driftEl=$("cDrift"),
         leftEl=$("cLeft"), finishEl=$("cFinish");
   const plannedFinish = doc.items.length ? segmentPlannedEnd() : null;
+
+  // Keep the Start column current without a full render(): Start cells are
+  // always a read-only <span>, never an <input>, in every role — editor,
+  // driver, viewer — so overwriting their text every tick can never clobber
+  // something someone's mid-typing. Runs whether or not a cue is live, since
+  // a standby anchor still needs to reflect the last completed cue's real
+  // end time, not just live cues get this treatment.
+  if(doc.items.length){
+    const liveStarts = displayStarts(doc);
+    const rowsEl = $("rows");
+    if(rowsEl) rowsEl.querySelectorAll(".row").forEach(rowEl => {
+      const i = +rowEl.dataset.i;
+      const it = doc.items[i];
+      if(!it || it.type!=="cue") return;
+      const span = rowEl.querySelector(".start");
+      if(span) span.textContent = fmtClock(liveStarts[i]);
+    });
+  }
 
   if(!doc.live){
     dot.style.background="var(--done)"; dot.style.boxShadow="none";

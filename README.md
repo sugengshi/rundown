@@ -100,6 +100,15 @@ Running a segment again (jumping back to it with its row's ▶) replaces the
 tag with the new attempt — every run is still kept in the export, but the
 on-screen tag always reflects the latest one.
 
+**The Start column reflects this too.** A segment that already ran shows
+the real clock time it started, not the original schedule. Segments still
+to come keep shifting live — anchored to the current cue's projected end,
+or the last completed segment's real end if nothing's live right now — so
+if something runs long, everything after it visibly moves later without
+you touching a thing. **Export CSV** keeps the original planned schedule in
+its Start column, on purpose — it's the archive of what was planned, and
+the `Actual` column (below) is where the real timing lives instead.
+
 **Export CSV** gains an `Actual` column (the raw time used, not the delta)
 appended after Notes. Column order for the first six fields is unchanged,
 so a file you export can still be pasted back in via **Import from Sheets**
