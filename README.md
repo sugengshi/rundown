@@ -174,6 +174,13 @@ Read this part.
 - **Railway is a single container.** If it restarts mid-show, viewers reconnect
   automatically and the WebSocket rooms rebuild — but there's a gap. Nobody's
   uptime is free.
+- **If you set up a rundown ahead of the event, re-enter "Show starts" on
+  the actual day before going live.** The start time only anchors to
+  "today" the moment you type it in — it doesn't refresh itself. Set one up
+  during rehearsal on Monday and run it live on Wednesday without touching
+  that field again, and Drift, Est. finish, and every Start time will be
+  off by two days all at once. Fix: open "Show starts," re-enter the time
+  (same value is fine), on the day of.
 
 ## Layout
 

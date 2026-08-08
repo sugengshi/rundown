@@ -601,6 +601,21 @@ async function api(path, opts){
   return r.json();
 }
 
+// Viewers and drivers already auto-scroll to the live row on every render()
+// (see the render()-gated block below) — deliberately NOT extended to the
+// editor, since the editor's screen re-renders on every keystroke (a note
+// being typed, a duration being adjusted), and yanking scroll position
+// there mid-edit would be worse than not scrolling at all. This is the
+// editor-only, load/reconnect-only equivalent: called once after the
+// initial page load and once each time the socket reconnects, never from
+// render() itself.
+function scrollToLive(){
+  if(!doc || !doc.live) return;
+  const idx = doc.items.findIndex(i => i.id === doc.live.itemId);
+  if(idx < 0) return;
+  const el = document.querySelector(`.row[data-i="${idx}"]`);
+  if(el) el.scrollIntoView({ block:"center", behavior:"smooth" });
+}
 async function loadShow(){
   const d = await api(`/api/rundowns/${SHOW_ID}?${auth()}`);
   doc = d.data; name = d.name; canEdit = d.canEdit; canDrive = !!d.canDrive;
@@ -630,6 +645,7 @@ async function loadShow(){
       <span id="state">—</span>`;
   }
   render();
+  if(canEdit) scrollToLive();
   // Only the operator's clock is trustworthy for anchoring the show's start
   // time (see setStartEpoch). If this rundown predates the timezone fix and
   // we just filled in that anchor, persist it so viewers stop computing it
@@ -641,7 +657,13 @@ async function loadShow(){
 function connect(){
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/${SHOW_ID}`);
-  ws.onopen = () => { $("tallyDot").title = "Connected"; state("Connected"); };
+  ws.onopen = () => {
+    $("tallyDot").title = "Connected"; state("Connected");
+    // Covers reconnects specifically (the initial connect is already
+    // handled by loadShow()'s own call) — a dropped-and-restored socket is
+    // exactly the kind of "screen came back" moment this should catch too.
+    if(canEdit) scrollToLive();
+  };
   ws.onmessage = e => {
     const m = JSON.parse(e.data);
     if(m.type === "update" && !canEdit){

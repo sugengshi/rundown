@@ -102,6 +102,33 @@ and an operator both hitting Go, will fight. Single caller by design.
 
 This is the section that matters. Each of these was argued and settled.
 
+### Drift == (Est. finish − original finish), confirmed not changed, 2026-08-08
+
+Asked to "count the drift from the original finish time with the est finish
+time" — checked before touching anything, because a live event was
+reporting a nonsensical `+23:38:05` Drift and the request sounded like it
+might fix that. It wouldn't have: `drift` in `tick()` and `estFinish −
+segmentPlannedEnd()` are the same number, algebraically, given the app's
+existing assumption that everything after the live cue still runs to plan.
+Verified numerically (not just by hand) with three scenarios run through
+the actual functions, including one shaped exactly like the reported bug —
+all three matched to the millisecond. See `drift_equiv_check.mjs`-style
+reasoning if this needs re-deriving.
+
+The real cause of the 23-hour figure: `doc.startEpoch` only gets set the
+first time a rundown is opened, or when someone explicitly edits "Show
+starts" (`$("inStart")`'s `change` handler → `setStartEpoch()`). It is never
+silently refreshed to "today." A rundown set up (or last touched) on a
+different calendar day than the actual live event keeps the old day as its
+anchor, and every planned time — Drift, Est. finish, the CSV archive — is
+off by however many days have passed. **This is a real, sharp,
+undocumented-until-now edge case, not something either of the two above
+formulas can fix**, since both read from the same stale `startEpoch`. The
+fix in the moment is operational: re-enter "Show starts" on the day of the
+event to force the `change` event and re-anchor. Worth a self-check on load
+(warn if the anchor's calendar date doesn't match today) if this recurs —
+nothing built for it yet.
+
 ### Live-adjusted Start times, added 2026-08-08
 
 "Can the start time of a session adjust according to the real ending time
@@ -165,6 +192,29 @@ What `displayStarts()` actually does, cue by cue, in list order:
   driver, viewer) — never an `<input>` — specifically so `tick()` can
   overwrite their `textContent` every 250ms without any risk of clobbering
   something someone's mid-typing elsewhere in the row.
+
+### Editor auto-scroll on load/reconnect only, added 2026-08-08
+
+Viewers and drivers already auto-scrolled to the live row on every
+`render()` — that block deliberately excludes the editor, because the
+editor's screen re-renders on every keystroke, and re-centering their
+scroll position while they're typing a note on an unrelated row would be
+worse than not scrolling at all.
+
+Asked to make the screen "always scroll to the active session when the
+screen is refreshed" — confirmed with the operator before building, since
+"always" read two very different ways: literally every re-render (would
+break editing), or specifically when the page comes back (load, or a
+socket reconnect). Went with the latter. New function `scrollToLive()`
+holds the same `scrollIntoView` logic already used in two other places
+(`goToIndex()`'s own local scroll, and the render()-gated viewer/driver
+block) — called from exactly two spots, both editor-only: once at the end
+of `loadShow()` (covers a hard page load/refresh), and once in
+`ws.onopen()` (covers a dropped-and-restored socket; `onopen` fires on
+every automatic reconnect, not just the first connect, since `connect()`
+re-runs itself via `setTimeout` in `onclose`). It is **not** called from
+`render()` — that's the entire point of building a separate function
+instead of just widening the existing gate.
 
 ### Actual-duration history, added 2026-08-08
 
@@ -401,6 +451,17 @@ What changed, if you touch this again:
   silently. Single operator by design.
 - **Single container.** A Railway restart mid-show drops the WebSocket rooms;
   clients reconnect automatically, but there's a gap.
+- **`startEpoch` doesn't refresh itself.** It's set the first time a rundown
+  is opened, or whenever someone explicitly edits "Show starts" — never
+  silently re-anchored to today. Set up a rundown one day, run it live on a
+  later day without re-touching "Show starts," and every planned time —
+  Drift, Est. finish, the whole Start column — is off by however many days
+  passed, all at once. Symptom looks alarming (a multi-hour Drift out of
+  nowhere) but the fix is one field: re-enter "Show starts" on the day of
+  the event, even to the same value, to force the `change` handler and
+  re-anchor `startEpoch` to today. Nothing catches this automatically yet —
+  a load-time check comparing the anchor's calendar date to today's would
+  close it, if this keeps coming up.
 
 ---
 
@@ -468,6 +529,18 @@ were actually run:
   immediately after a wildly-overrun cue, ignoring accumulated drift
   entirely, same as before this feature existed. The Sheets import/diff
   suite was re-run again after this change and still passes in full.
+- **Drift == Est. finish delta, verified 2026-08-08 (no code changed):**
+  ran the exact `tick()` formulas for both numbers through three scenarios
+  — mid-cue not yet overrunning, mid-cue already overrunning its own
+  length, and a `startEpoch` anchored a day early — and they matched to
+  the millisecond in every case. Confirms the two are algebraically
+  identical given the app's existing assumption that everything after the
+  live cue runs to plan; recorded so nobody re-derives this from scratch
+  next time the same question comes up.
+- **editor auto-scroll on load/reconnect (2026-08-08):** `scrollToLive()`
+  scrolls to the correct row when a cue is live, does nothing when no cue
+  is live, and does nothing when `doc.live.itemId` points at a row that no
+  longer exists (e.g. deleted while live) rather than throwing.
 
 If you change the permission logic, re-run these. The notes-stripping one is
 the one that silently causes real harm if it regresses.
