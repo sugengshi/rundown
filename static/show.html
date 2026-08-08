@@ -519,35 +519,22 @@ function latestActual(itemId){
   const h = entries[entries.length-1];
   return Math.max(0, Math.round((h.endedAt - h.startedAt)/1000));
 }
-// How far ahead/behind the WHOLE SHOW is, measured through this cue —
-// not just whether this one segment ran long or short on its own. Sums
-// (actual - planned) across every cue at or before this one in the list
-// that has completed at least once; cues that haven't run yet simply don't
-// contribute. A cue that ran short can still show the show running behind
-// overall, if an earlier cue ate the difference — that's the point: this
-// number answers "are we on schedule right now," not "was this segment ok."
-function cumulativeShift(itemId){
-  let total = 0;
-  for(const it of doc.items){
-    if(it.type !== "cue") continue;
-    const secs = latestActual(it.id);
-    if(secs != null) total += secs - (it.dur||0);
-    if(it.id === itemId) return total;
-  }
-  return null;
-}
 // Small tag rendered under the Length cell once a cue has run at least
-// once. Colored the same way Drift already is — over(schedule)=live-red,
-// under(schedule)=ok-green; fmtDur() already supplies its own minus sign
-// for negative totals, so only "+" is added here.
+// once: the raw clock time that segment took, e.g. "21:05" against a
+// 20:00 plan — not a delta, not a running total. Still colored the way
+// Drift already is (over its own plan → live-red, under → ok-green) so an
+// over/under segment is visible at a glance, but the number itself is the
+// actual time-on-air for THIS segment only.
 function actualBadge(it){
-  if(latestActual(it.id) == null) return "";
-  const total = cumulativeShift(it.id);
-  const cls = total > 0 ? "over" : total < 0 ? "under" : "";
-  const sign = total > 0 ? "+" : "";
-  const state = total === 0 ? "on schedule" : total > 0 ? "behind schedule" : "ahead of schedule";
-  const title = `Show is ${fmtDur(Math.abs(total))} ${state}, through this segment`;
-  return `<span class="actual ${cls}" title="${escA(title)}">${sign}${fmtDur(total)}</span>`;
+  const secs = latestActual(it.id);
+  if(secs == null) return "";
+  const planned = it.dur||0;
+  const delta = secs - planned;
+  const cls = delta > 0 ? "over" : delta < 0 ? "under" : "";
+  const title = delta === 0
+    ? `Ran ${fmtDur(secs)}, exactly as planned`
+    : `Ran ${fmtDur(secs)}, planned ${fmtDur(planned)} (${delta>0?"+":""}${fmtDur(delta)})`;
+  return `<span class="actual ${cls}" title="${escA(title)}">${fmtDur(secs)}</span>`;
 }
 // Anchors doc.start ("HH:MM", still the editable field) to a real instant:
 // today, in whichever timezone the operator's own device is in, at that

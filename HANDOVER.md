@@ -127,19 +127,22 @@ what you'd be giving up.
 
 Things that matter if this gets touched again:
 
-- **The badge shows a running total, not that segment's own delta.** First
-  shipped showing each cue's individual over/under against its own planned
-  length; changed same day, on request, to `cumulativeShift()` — sum of
-  (actual − planned) across every cue at or before this one that has
-  completed at least once. The reasoning: a facilitator glancing at a badge
-  mid-show wants "are we on schedule right now," and a segment that ran
-  exactly on time can still leave the show behind if an earlier one ran
-  long. `actualBadge()` renders the cumulative `+MM:SS` / `−MM:SS`, colored
-  like Drift already is (over → `--live` red, under → `--ok` green). The raw
-  per-segment actual time (not the cumulative figure) is what gets written
-  to the CSV's `Actual` column (see below) — a running total computed at
-  export time wouldn't survive a re-import/re-export round trip cleanly the
-  way a plain duration does.
+- **The badge shows that segment's own raw time-on-air, e.g. "21:05" against
+  a 20:00 plan — not a delta, and not a running total.** Went through two
+  other shapes the same day before landing here, worth knowing if it comes
+  up again: first shipped as `+MM:SS`/`−MM:SS` (the delta); changed to
+  `cumulativeShift()`, a running sum of every prior cue's delta, on the
+  theory that "are we on schedule right now" mattered more than any one
+  segment's own number; reverted within the hour when the actual ask turned
+  out to be simpler — just the clock time that segment took, full stop, no
+  arithmetic against other segments. `cumulativeShift()` was deleted rather
+  than left dead. `actualBadge()` still colors the tag the way Drift already
+  is (over its own plan → `--live` red, under → `--ok` green) so an
+  over/under segment is visible without reading the number, and the
+  planned-vs-actual delta is still available on hover (`title=`) — it's
+  just not the headline figure anymore. This is also, conveniently, exactly
+  what the CSV's `Actual` column already stores (see below); the two were
+  briefly out of sync during the cumulative detour and are back in step now.
 - **Only the most recent run of a cue counts.** `latestActual()` filters
   `doc.history` to one `itemId` and reads the last entry. Jumping back to a
   cue via its row's ▶ and running it again pushes a *new* history entry
@@ -383,15 +386,14 @@ were actually run:
   startEpoch leaves everything but `live` and `history` unchanged;
   malformed `history` (not a list) 400s; wrong/viewer key still 403s on the
   now-larger endpoint surface. On the frontend: `recordHistory()` +
-  `latestActual()` + `actualBadge()` + `cumulativeShift()` tested via a Node
-  stub-DOM harness extracting the real functions out of `show.html` —
-  over/under badges render the right class and text, a never-run cue
-  renders no badge, an earlier overrun correctly carries onto a later
-  on-time cue's badge instead of resetting to zero, a not-yet-run cue in
-  the middle of the list is skipped rather than counted as a zero, and
-  `fmtDur` stays consistent. The existing Sheets import/diff test suite was
-  re-run after this change and still passes in full — nothing in the
-  render/CSV path regressed it.
+  `latestActual()` + `actualBadge()` tested via a Node stub-DOM harness
+  extracting the real functions out of `show.html` — the badge's visible
+  text is the raw actual time (not the delta, which only appears on hover),
+  over/under coloring is right in both directions, a never-run cue renders
+  no badge, an earlier segment's overrun does NOT bleed into a later
+  segment's own badge, and `fmtDur` stays consistent. The existing Sheets
+  import/diff test suite was re-run after this change and still passes in
+  full — nothing in the render/CSV path regressed it.
 
 If you change the permission logic, re-run these. The notes-stripping one is
 the one that silently causes real harm if it regresses.
