@@ -88,13 +88,19 @@ exactly where they are; the import only ever touches segments and headings.
 
 Once a segment has been taken live and then left — by going to the next
 cue, stopping the show, or deleting the row — a small tag appears under its
-Length showing how it actually ran: green and `−MM:SS` if it finished
-early, red and `+MM:SS` if it ran long. Hover it for the exact time used vs.
-planned.
+Length: green and `−MM:SS` if the show is ahead of schedule through that
+point, red and `+MM:SS` if it's behind. Hover it for the exact figure.
 
-Running the same segment again (jumping back to it with its row's ▶)
-replaces the tag with the new attempt — the badge always reflects the most
-recent run, though every run is kept in the export.
+**This is a running total, not that segment's own score.** A segment that
+ran exactly on time can still show `+00:20` if an earlier segment ate 20
+seconds — the tag answers "are we on schedule right now," not "did this one
+segment go well." An earlier overrun carries forward onto every later
+segment's tag until something later runs short enough to cancel it out.
+
+Running a segment again (jumping back to it with its row's ▶) replaces its
+own contribution to the total with the new attempt — every run is still
+kept in the export, but the on-screen running total always reflects the
+latest one.
 
 **Export CSV** gains an `Actual` column (the raw time used, not the delta)
 appended after Notes. Column order for the first six fields is unchanged,

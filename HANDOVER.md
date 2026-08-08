@@ -127,13 +127,19 @@ what you'd be giving up.
 
 Things that matter if this gets touched again:
 
-- **The badge shows the delta, not the raw actual.** `actualBadge()` in
-  `show.html` renders `+MM:SS` / `−MM:SS` against planned length, colored
-  like Drift already is (over → `--live` red, under → `--ok` green) —
-  that's the number a facilitator glances at mid-show. The raw actual time
-  is still in `title=""` on hover, and is what gets written to the CSV's
-  new `Actual` column (see below), since a delta isn't a reusable value the
-  way a duration is.
+- **The badge shows a running total, not that segment's own delta.** First
+  shipped showing each cue's individual over/under against its own planned
+  length; changed same day, on request, to `cumulativeShift()` — sum of
+  (actual − planned) across every cue at or before this one that has
+  completed at least once. The reasoning: a facilitator glancing at a badge
+  mid-show wants "are we on schedule right now," and a segment that ran
+  exactly on time can still leave the show behind if an earlier one ran
+  long. `actualBadge()` renders the cumulative `+MM:SS` / `−MM:SS`, colored
+  like Drift already is (over → `--live` red, under → `--ok` green). The raw
+  per-segment actual time (not the cumulative figure) is what gets written
+  to the CSV's `Actual` column (see below) — a running total computed at
+  export time wouldn't survive a re-import/re-export round trip cleanly the
+  way a plain duration does.
 - **Only the most recent run of a cue counts.** `latestActual()` filters
   `doc.history` to one `itemId` and reads the last entry. Jumping back to a
   cue via its row's ▶ and running it again pushes a *new* history entry
@@ -377,12 +383,15 @@ were actually run:
   startEpoch leaves everything but `live` and `history` unchanged;
   malformed `history` (not a list) 400s; wrong/viewer key still 403s on the
   now-larger endpoint surface. On the frontend: `recordHistory()` +
-  `latestActual()` + `actualBadge()` tested via a Node stub-DOM harness
-  extracting the real functions out of `show.html` — over-time and
-  under-time badges render the right class and delta text, a never-run cue
-  renders no badge, `fmtDur` stays consistent. The existing Sheets
-  import/diff test suite was re-run after this change and still passes in
-  full — nothing in the render/CSV path regressed it.
+  `latestActual()` + `actualBadge()` + `cumulativeShift()` tested via a Node
+  stub-DOM harness extracting the real functions out of `show.html` —
+  over/under badges render the right class and text, a never-run cue
+  renders no badge, an earlier overrun correctly carries onto a later
+  on-time cue's badge instead of resetting to zero, a not-yet-run cue in
+  the middle of the list is skipped rather than counted as a zero, and
+  `fmtDur` stays consistent. The existing Sheets import/diff test suite was
+  re-run after this change and still passes in full — nothing in the
+  render/CSV path regressed it.
 
 If you change the permission logic, re-run these. The notes-stripping one is
 the one that silently causes real harm if it regresses.
