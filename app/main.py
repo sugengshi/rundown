@@ -212,6 +212,21 @@ def day_epoch_ms(item: dict, tz_name: str | None, fallback_ms: float) -> float:
     return dt.timestamp() * 1000
 
 
+def latest_actual_seconds(history: list, item_id: str):
+    """How long a cue actually ran, last time it went live — None if it
+    never has. A cue can go live more than once (operator jumps back via
+    the row ▶ button), so history can hold several entries per item_id;
+    the most recent is what 'how did that segment actually go' means."""
+    entries = [h for h in (history or []) if h.get("itemId") == item_id]
+    if not entries:
+        return None
+    h = entries[-1]
+    started, ended = h.get("startedAt"), h.get("endedAt")
+    if not isinstance(started, (int, float)) or not isinstance(ended, (int, float)):
+        return None
+    return max(0, round((ended - started) / 1000))
+
+
 def to_csv(name: str, data: dict) -> str:
     """A rundown as flat CSV. This is the archive format — plain text on
     purpose, so it outlives this application.
@@ -222,7 +237,12 @@ def to_csv(name: str, data: dict) -> str:
     midnight rollover. Older rundowns saved before that fix only have `start`
     as a bare "HH:MM" wall-clock string with no zone attached; those still
     render the old (occasionally wrong) way rather than being silently
-    reinterpreted."""
+    reinterpreted.
+
+    The 7th column, Actual, is appended at the end rather than inserted
+    among the first six — the paste-import parser reads Start/Length/Type/
+    Segment/Who/Notes by fixed position (0-5), and a column inserted earlier
+    would silently misalign every field on re-import of an exported file."""
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow([f"Rundown: {name}"])
@@ -232,10 +252,17 @@ def to_csv(name: str, data: dict) -> str:
         start_label = f"{start_label} ({tz_name})"
     w.writerow([f"Show starts: {start_label}"])
     w.writerow([])
-    w.writerow(["Start", "Length", "Type", "Segment", "Who", "Notes"])
+    w.writerow(["Start", "Length", "Type", "Segment", "Who", "Notes", "Actual"])
 
     start_epoch = data.get("startEpoch")
     items = data.get("items", [])
+    history = data.get("history", [])
+
+    def actual_col(item, is_cue):
+        if not is_cue:
+            return ""
+        secs = latest_actual_seconds(history, item.get("id"))
+        return fmt_dur(secs) if secs is not None else ""
 
     if isinstance(start_epoch, (int, float)):
         t_ms = float(start_epoch)
@@ -251,6 +278,7 @@ def to_csv(name: str, data: dict) -> str:
                 item.get("title", ""),
                 item.get("who", ""),
                 item.get("notes", ""),
+                actual_col(item, is_cue),
             ])
             if is_cue:
                 t_ms += int(item.get("dur") or 0) * 1000
@@ -266,6 +294,7 @@ def to_csv(name: str, data: dict) -> str:
                 item.get("title", ""),
                 item.get("who", ""),
                 item.get("notes", ""),
+                actual_col(item, is_cue),
             ])
             if is_cue:
                 t += int(item.get("dur") or 0)
@@ -443,10 +472,15 @@ async def set_live(show_id: str, body: dict, k: str = Query(default=""),
                     o: str = Query(default=""), d: str = Query(default="")):
     """Advance, skip, or stop the cue — split out from save_rundown() on
     purpose, so a driver-only key can move the show forward without ever
-    being able to touch segment content. This only ever writes doc['live'],
-    reconstructed here from the server's own last-saved copy of everything
-    else — a drive key can never smuggle a content change in through this
-    door, even if the client sent one."""
+    being able to touch segment content. This writes doc['live'] and, as of
+    the actual-duration log, doc['history'] too — both reconstructed here
+    from the server's own last-saved copy of everything else. A drive key
+    can never smuggle a content change (item titles, durations, notes,
+    name, shareNotes...) in through this door, even if the client sent one:
+    'history' is the one non-'live' field it's allowed to touch, because
+    logging what actually happened while driving is part of driving, not
+    content editing — a co-facilitator handed a driver link still needs
+    their cue transitions recorded."""
     row = await fetch_row(show_id)
     async with pool.acquire() as con:
         drive_key = await get_or_create_drive_key(con, row)
@@ -456,15 +490,20 @@ async def set_live(show_id: str, body: dict, k: str = Query(default=""),
         live = body.get("live")
         if live is not None and not isinstance(live, dict):
             raise HTTPException(400, "Expected a live object or null.")
+        history = body.get("history")
+        if history is not None and not isinstance(history, list):
+            raise HTTPException(400, "Expected a history array.")
 
         data = as_dict(row["data"])
         data["live"] = live
+        if history is not None:
+            data["history"] = history
         updated = await con.fetchrow(
             """UPDATE rundowns SET data = $2::jsonb, updated_at = now()
                 WHERE id = $1 RETURNING updated_at""",
             show_id, json.dumps(data))
 
-    await hub.broadcast(show_id, {"type": "live", "live": live})
+    await hub.broadcast(show_id, {"type": "live", "live": live, "history": data.get("history")})
     return {"ok": True, "updatedAt": updated["updated_at"].isoformat(),
             "viewers": hub.count(show_id)}
 

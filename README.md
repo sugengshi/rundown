@@ -84,6 +84,23 @@ it into deleting and re-adding things that didn't actually change.
 field to represent one. Any day breaks already in the rundown are left
 exactly where they are; the import only ever touches segments and headings.
 
+## Actual time per segment
+
+Once a segment has been taken live and then left — by going to the next
+cue, stopping the show, or deleting the row — a small tag appears under its
+Length showing how it actually ran: green and `−MM:SS` if it finished
+early, red and `+MM:SS` if it ran long. Hover it for the exact time used vs.
+planned.
+
+Running the same segment again (jumping back to it with its row's ▶)
+replaces the tag with the new attempt — the badge always reflects the most
+recent run, though every run is kept in the export.
+
+**Export CSV** gains an `Actual` column (the raw time used, not the delta)
+appended after Notes. Column order for the first six fields is unchanged,
+so a file you export can still be pasted back in via **Import from Sheets**
+without anything shifting.
+
 ## Multi-day events
 
 One rundown can cover a whole multi-day event instead of needing a separate

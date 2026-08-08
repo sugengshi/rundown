@@ -91,6 +91,14 @@
   .cell input:focus,.cell textarea:focus{border-color:var(--focus);background:var(--panel)}
   .cell .start{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
   .cell input.dur{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500}
+  /* Column, not row: with no actual badge yet this is one child at width:100%,
+     so it looks identical to before. Once actualBadge() returns something,
+     the two lines stack instead of fighting for the same 58-78px of width. */
+  .cell.dur{flex-direction:column;align-items:flex-start;justify-content:center;gap:1px}
+  .actual{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:10px;
+    line-height:1.2;white-space:nowrap;color:var(--muted)}
+  .actual.over{color:var(--live)}
+  .actual.under{color:var(--ok)}
   .cell input.title{font-weight:500}
   .cell.who input,.cell.who .ro{color:var(--muted);font-size:13px}
   .cell.tools{gap:4px;justify-content:flex-end}
@@ -484,6 +492,48 @@ function segmentPlannedEnd(){
     : (starts.length ? starts[starts.length-1] : doc.startEpoch);
   return anchor + total*1000;
 }
+
+/* ---------- actual-duration history ---------- */
+// Logs how long the CURRENTLY live cue actually ran, right before it stops
+// being live — call this before overwriting/clearing doc.live, never after.
+// A cue that goes live more than once (jumped back to via the row ▶ button)
+// gets a new entry each time; latestActual() below always reads the most
+// recent one, so re-running a segment updates its badge instead of leaving
+// a stale first attempt on screen.
+function recordHistory(){
+  if(!doc.live) return;
+  const it = doc.items.find(i => i.id === doc.live.itemId);
+  doc.history = doc.history || [];
+  doc.history.push({
+    itemId: doc.live.itemId,
+    title: it ? it.title : "(deleted segment)",
+    plannedDur: it ? (it.dur||0) : 0,
+    startedAt: doc.live.startedAt,
+    endedAt: now(),
+  });
+}
+// Seconds the cue actually ran, last time it went live — null if never.
+function latestActual(itemId){
+  const entries = (doc.history||[]).filter(h => h.itemId===itemId);
+  if(!entries.length) return null;
+  const h = entries[entries.length-1];
+  return Math.max(0, Math.round((h.endedAt - h.startedAt)/1000));
+}
+// Small over/under tag rendered under the Length cell once a cue has run at
+// least once. Shows the delta (not the raw actual), colored the same way
+// Drift already is — over=live-red, under=ok-green — because that's the one
+// number a facilitator actually needs mid-show; fmtDur() already supplies
+// its own minus sign for negative deltas, so only "+" is added here.
+function actualBadge(it){
+  const secs = latestActual(it.id);
+  if(secs == null) return "";
+  const planned = it.dur||0;
+  const delta = secs - planned;
+  const cls = delta > 0 ? "over" : delta < 0 ? "under" : "";
+  const sign = delta > 0 ? "+" : "";
+  const title = `Ran ${fmtDur(secs)}, planned ${fmtDur(planned)}`;
+  return `<span class="actual ${cls}" title="${escA(title)}">${sign}${fmtDur(delta)}</span>`;
+}
 // Anchors doc.start ("HH:MM", still the editable field) to a real instant:
 // today, in whichever timezone the operator's own device is in, at that
 // clock time. Returns true if it had to fill in a missing anchor (i.e. this
@@ -516,6 +566,7 @@ async function loadShow(){
   const d = await api(`/api/rundowns/${SHOW_ID}?${auth()}`);
   doc = d.data; name = d.name; canEdit = d.canEdit; canDrive = !!d.canDrive;
   doc.items = doc.items || [];
+  doc.history = doc.history || [];
   const migrated = ensureStart();
   // Three tiers now, not two: full editor, drive-only (can advance/stop
   // cues, can't touch content), or plain read-only viewer. CSS keys off
@@ -556,7 +607,7 @@ function connect(){
     const m = JSON.parse(e.data);
     if(m.type === "update" && !canEdit){
       applyingRemote = true;
-      doc = m.data; doc.items = doc.items || [];
+      doc = m.data; doc.items = doc.items || []; doc.history = doc.history || [];
       ensureStart(); // display-only fallback if this arrived from a pre-fix save
       name = m.name; $("showName").textContent = name;
       render();
@@ -570,8 +621,11 @@ function connect(){
       // new on purpose: before driver links existed, only the operator ever
       // changed doc.live, so the operator's tab could safely ignore
       // broadcasts and trust its own local state. Now a driver on another
-      // device can move the cue too, and the operator needs to see that.
+      // device can move the cue too, and the operator needs to see that —
+      // including the actual-duration log, which a driver's transitions
+      // write to just as much as the operator's do.
       doc.live = m.live;
+      if(m.history) doc.history = m.history;
       render();
     }
     if(m.type === "viewers") $("viewerCount").textContent = m.viewers + " watching";
@@ -608,16 +662,16 @@ function save(immediate){
   if(immediate) send(); else saveTimer = setTimeout(send, 500);
 }
 // Separate from save(): transport actions (go/skip/stop) hit their own
-// narrow endpoint that can only ever change doc.live, never content — this
-// is what a drive-only key is authorised to call. Editors use it too now
-// instead of round-tripping the whole document just to change which cue is
-// live, which is a smaller, safer write either way.
+// narrow endpoint that can only ever change doc.live and doc.history, never
+// content — this is what a drive-only key is authorised to call. Editors
+// use it too now instead of round-tripping the whole document just to
+// change which cue is live, which is a smaller, safer write either way.
 async function saveLive(){
   if(!canEdit && !canDrive) return;
   try{
     await api(`/api/rundowns/${SHOW_ID}/live?${auth()}`, {
       method:"PUT", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ live: doc.live })
+      body: JSON.stringify({ live: doc.live, history: doc.history||[] })
     });
     state(doc.live ? "Live" : "Stopped");
     banner("", "");
@@ -671,7 +725,7 @@ function render(){
       <div class="cell start"><span class="start">${fmtClock(starts[i])}</span></div>
       <div class="cell dur">${canEdit
         ? `<input class="dur f-dur" value="${fmtDur(it.dur||0)}" aria-label="Length">`
-        : `<span class="ro dur">${fmtDur(it.dur||0)}</span>`}</div>
+        : `<span class="ro dur">${fmtDur(it.dur||0)}</span>`}${actualBadge(it)}</div>
       <div class="cell title">${canEdit
         ? `<input class="title f-title" value="${escA(it.title||"")}" placeholder="Segment name" aria-label="Segment name">`
         : `<span class="ro title">${esc(it.title||"")}</span>`}</div>
@@ -764,6 +818,7 @@ setInterval(tick, 250);
 /* ---------- transport (editor or driver) ---------- */
 function goToIndex(i){
   if((!canEdit && !canDrive) || !doc || i<0 || i>=doc.items.length || doc.items[i].type!=="cue") return;
+  recordHistory(); // log whatever WAS live, if anything, before overwriting it
   doc.live = { itemId: doc.items[i].id, startedAt: now() };
   saveLive(); render();
   const row = document.querySelector(`.row[data-i="${i}"]`);
@@ -778,6 +833,7 @@ function goNext(){
 }
 function stopShow(){
   if((!canEdit && !canDrive) || !doc) return;
+  recordHistory();
   doc.live = null; saveLive(); render();
 }
 
@@ -791,7 +847,7 @@ $("rows").addEventListener("click", e => {
   if(a==="up" && i>0) [doc.items[i-1],doc.items[i]]=[doc.items[i],doc.items[i-1]];
   if(a==="down" && i<doc.items.length-1) [doc.items[i+1],doc.items[i]]=[doc.items[i],doc.items[i+1]];
   if(a==="dup") doc.items.splice(i+1,0,{...doc.items[i], id:rid()});
-  if(a==="del"){ if(doc.live && doc.live.itemId===doc.items[i].id) doc.live=null; doc.items.splice(i,1); }
+  if(a==="del"){ if(doc.live && doc.live.itemId===doc.items[i].id){ recordHistory(); doc.live=null; } doc.items.splice(i,1); }
   save(); render();
 });
 $("rows").addEventListener("input", e => {
@@ -871,11 +927,19 @@ $("btnCopyDrive").onclick = async () => {
 };
 $("btnCsv").onclick = () => {
   const starts = plannedStarts(doc), q = s => `"${String(s ?? "").replace(/"/g,'""')}"`;
-  const lines = [["Start","Length","Type","Segment","Who","Notes"].join(",")];
-  doc.items.forEach((it,i) => lines.push([
-    q(fmtClock(starts[i])), q(it.type==="cue" ? fmtDur(it.dur||0) : ""),
-    q(it.type), q(it.title||""), q(it.who||""), q(it.notes||"")
-  ].join(",")));
+  // Actual is the raw time-on-air (fmtDur of latestActual), not the delta the
+  // on-screen badge shows — matches Python's to_csv(), which is the format
+  // this file needs to round-trip against on re-import.
+  const lines = [["Start","Length","Type","Segment","Who","Notes","Actual"].join(",")];
+  doc.items.forEach((it,i) => {
+    const isCue = it.type==="cue";
+    const secs = isCue ? latestActual(it.id) : null;
+    lines.push([
+      q(fmtClock(starts[i])), q(isCue ? fmtDur(it.dur||0) : ""),
+      q(it.type), q(it.title||""), q(it.who||""), q(it.notes||""),
+      q(secs != null ? fmtDur(secs) : "")
+    ].join(","));
+  });
   const url = URL.createObjectURL(new Blob([lines.join("\n")], {type:"text/csv"}));
   const a = document.createElement("a");
   a.href = url; a.download = name.replace(/[^\w -]/g,"") + ".csv"; a.click();

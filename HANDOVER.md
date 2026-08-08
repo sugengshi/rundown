@@ -102,6 +102,58 @@ and an operator both hitting Go, will fight. Single caller by design.
 
 This is the section that matters. Each of these was argued and settled.
 
+### Actual-duration history, added 2026-08-08
+
+"Show the time used for each past session" — scoped down to per-segment,
+after-the-fact, not a live stopwatch overlay. A cue's actual runtime is
+logged the moment it stops being live: taken over by the next cue, stopped
+outright, or deleted while live. All three paths funnel through one
+function, `recordHistory()`, called *before* `doc.live` is cleared or
+reassigned — never after, since `recordHistory()` reads `doc.live.startedAt`
+to compute the elapsed time.
+
+Why this piggybacks on the drive-tier `/live` endpoint instead of getting
+its own: a driver, not just an editor, ends cues — so whatever logs the
+actual duration has to be reachable with drive authority. `PUT
+/api/rundowns/{id}/live` already had that authority check and already
+existed specifically to accept narrow, whitelisted fields; `history` became
+a second whitelisted field alongside `live`, not a new endpoint. Re-verified
+the narrow-endpoint property still holds with `history` added: a
+drive-authority request carrying a content-hijack payload (title, notes,
+shareNotes, startEpoch all altered) still only ever changes `live` and
+`history` server-side — every hijacked field came back unchanged. If you
+ever merge `/live` and the full-document `PUT` together, this guarantee is
+what you'd be giving up.
+
+Things that matter if this gets touched again:
+
+- **The badge shows the delta, not the raw actual.** `actualBadge()` in
+  `show.html` renders `+MM:SS` / `−MM:SS` against planned length, colored
+  like Drift already is (over → `--live` red, under → `--ok` green) —
+  that's the number a facilitator glances at mid-show. The raw actual time
+  is still in `title=""` on hover, and is what gets written to the CSV's
+  new `Actual` column (see below), since a delta isn't a reusable value the
+  way a duration is.
+- **Only the most recent run of a cue counts.** `latestActual()` filters
+  `doc.history` to one `itemId` and reads the last entry. Jumping back to a
+  cue via its row's ▶ and running it again pushes a *new* history entry
+  rather than overwriting the old one — full history is kept for the CSV
+  archive, but the on-screen badge always reflects the latest attempt, not
+  the first.
+- **CSV export gained a 7th column, `Actual`, appended at the end — not
+  inserted.** Both `to_csv()` in `app/main.py` and the `btnCsv` handler in
+  `show.html` do this identically and deliberately: the paste-import parser
+  reads Start/Length/Type/Segment/Who/Notes by fixed position (0-5), so an
+  Actual column inserted earlier would silently misalign every field on
+  re-import of an exported file. `Actual` is also always ignored on import,
+  same as `Start` — it's derived, not authored.
+- **The Python and JS duration formatters must stay identical.** `fmt_dur()`
+  (`app/main.py`) and `fmtDur()` (`show.html`) both zero-pad minutes
+  (`04:40`, not `4:40`) and both switch to `H:MM:SS` past an hour. A CSV
+  archived by the server and a badge rendered in the browser need to read
+  the same way, or "the time we exported" stops matching "the time we saw
+  live."
+
 ### Firebase was evaluated and dropped
 
 Firebase Realtime Database was built first and works. It was replaced by
@@ -320,6 +372,17 @@ were actually run:
 - archive → viewer link returns 410 → restore → re-archive → permanent delete
 - export zip returns a valid archive
 - WebSocket connects and broadcasts viewer counts
+- **actual-duration history (2026-08-08):** a drive-authority hijack payload
+  to `/live` carrying `history` alongside altered title/notes/shareNotes/
+  startEpoch leaves everything but `live` and `history` unchanged;
+  malformed `history` (not a list) 400s; wrong/viewer key still 403s on the
+  now-larger endpoint surface. On the frontend: `recordHistory()` +
+  `latestActual()` + `actualBadge()` tested via a Node stub-DOM harness
+  extracting the real functions out of `show.html` — over-time and
+  under-time badges render the right class and delta text, a never-run cue
+  renders no badge, `fmtDur` stays consistent. The existing Sheets
+  import/diff test suite was re-run after this change and still passes in
+  full — nothing in the render/CSV path regressed it.
 
 If you change the permission logic, re-run these. The notes-stripping one is
 the one that silently causes real harm if it regresses.
