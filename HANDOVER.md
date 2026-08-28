@@ -193,6 +193,41 @@ What `displayStarts()` actually does, cue by cue, in list order:
   overwrite their `textContent` every 250ms without any risk of clobbering
   something someone's mid-typing elsewhere in the row.
 
+### Reset button on the actual-time tag, added 2026-08-08
+
+Direct fallout from the stale-`startEpoch` bug two sections up, surfaced by
+a real rundown: an operator tested the Go/Stop controls before a live event
+(a few seconds each on the first two cues), which logged real history
+entries exactly as the feature is supposed to — then those test runs stuck
+around, permanently overriding both the actual-time tag and the Start
+column for those two rows with test timing instead of the plan, with no
+way to undo it short of deleting and recreating the rows.
+
+Confirmed re-entering "Show starts" does **not** fix this — `displayStarts()`
+prefers real history over the anchor for any cue that has it, by design
+(see two sections up), so the stale test data wins regardless of what the
+anchor says. This is the same mechanism, just experienced from the other
+side.
+
+`actualBadge()` now renders a real `<button>` instead of a `<span>` when
+`canEdit` is true, with `data-act="resethist"` wired into the existing rows
+click handler (same delegation pattern as `up`/`down`/`dup`/`del` —
+`e.target.closest("button[data-act]")`, then branch on `a`). Clicking it
+runs `doc.history = doc.history.filter(h => h.itemId !== thisItemsId)` —
+**every** entry for that item, not just the latest; "reset" means "make
+this look like it never ran," not "undo one attempt." No `confirm()`
+dialog, matching `del` immediately above it in the same handler — this
+editor has no undo anywhere else, and a stray click here is no more
+consequential than a stray click on delete.
+
+Viewers and drivers still get the plain, inert `<span>` — gated in
+`actualBadge()` itself by checking `canEdit` before choosing which tag to
+return, not just left to CSS, so a driver's HTML never contains a button
+there in the first place. CSS strips all button chrome (`button.actual`)
+so it's pixel-identical to the read-only version except for a hover
+underline — no new column width, no re-litigating the tools-column overflow
+work from earlier in the project.
+
 ### Editor auto-scroll on load/reconnect only, added 2026-08-08
 
 Viewers and drivers already auto-scrolled to the live row on every
@@ -541,6 +576,22 @@ were actually run:
   scrolls to the correct row when a cue is live, does nothing when no cue
   is live, and does nothing when `doc.live.itemId` points at a row that no
   longer exists (e.g. deleted while live) rather than throwing.
+- **reset button on the actual-time tag (2026-08-08):** `actualBadge()`
+  renders a real `<button>` with `data-act="resethist"` for an editor and a
+  plain, inert `<span>` with no `data-act` at all for a non-editor — checked
+  directly on the returned HTML, not inferred from CSS. The reset filter
+  itself (`doc.history.filter(h => h.itemId !== id)`) was verified to clear
+  every entry for the targeted item while leaving another item's history
+  completely untouched.
+  ⚠️ **Not yet tested against the real backend**: this is a plain content
+  edit going through the existing full-document `save()`/`PUT
+  /api/rundowns/{id}`, the same path `del`/`dup`/every other row edit
+  already uses — should need nothing new server-side — but that path itself
+  wasn't re-exercised end-to-end this round (the sandbox's Node test
+  environment recycled mid-session and the Sheets import/diff suite file
+  was lost with it; nothing touched here overlaps that code, but it means
+  this feature has unit coverage only, not an integration re-run). Worth a
+  real save-and-reload check before trusting it on the next live event.
 
 If you change the permission logic, re-run these. The notes-stripping one is
 the one that silently causes real harm if it regresses.

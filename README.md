@@ -100,6 +100,12 @@ Running a segment again (jumping back to it with its row's ▶) replaces the
 tag with the new attempt — every run is still kept in the export, but the
 on-screen tag always reflects the latest one.
 
+**As an editor, that tag is also a button.** Testing the Go/Stop controls
+before a show logs a real time the same as running the segment for real
+would — click the tag to clear it, which un-sticks that segment's Start
+time back to the plan too. No confirmation prompt, same as deleting a row:
+click it, it's cleared.
+
 **The Start column reflects this too.** A segment that already ran shows
 the real clock time it started, not the original schedule. Segments still
 to come keep shifting live — anchored to the current cue's projected end,

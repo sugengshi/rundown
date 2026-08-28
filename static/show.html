@@ -99,6 +99,13 @@
     line-height:1.2;white-space:nowrap;color:var(--muted)}
   .actual.over{color:var(--live)}
   .actual.under{color:var(--ok)}
+  /* For editors this tag is a real <button> (click to reset a stray test
+     run) — strip button chrome so it stays visually identical to the
+     read-only <span> version viewers/drivers get, just with a pointer
+     cursor and an underline-on-hover as the only hint it's clickable. */
+  button.actual{background:transparent;border:none;padding:0;margin:0;
+    font:inherit;color:inherit;text-align:left;cursor:pointer}
+  button.actual:hover{text-decoration:underline}
   .cell input.title{font-weight:500}
   .cell.who input,.cell.who .ro{color:var(--muted);font-size:13px}
   .cell.tools{gap:4px;justify-content:flex-end}
@@ -562,6 +569,14 @@ function latestActual(itemId){
 // Drift already is (over its own plan → live-red, under → ok-green) so an
 // over/under segment is visible at a glance, but the number itself is the
 // actual time-on-air for THIS segment only.
+// For an editor, this is a live BUTTON, not just a tag: testing the Go/Stop
+// controls before a show logs a real history entry same as the real thing
+// would, and there was no way to undo that without deleting and recreating
+// the row. Clicking it wipes every history entry for this item, which
+// un-sticks its Start (and this badge itself) back to the plan — see
+// "resethist" in the rows click handler. Viewers and drivers get the plain,
+// inert version; they can't edit content, so a reset button would just be
+// a dead end for them.
 function actualBadge(it){
   const secs = latestActual(it.id);
   if(secs == null) return "";
@@ -571,7 +586,8 @@ function actualBadge(it){
   const title = delta === 0
     ? `Ran ${fmtDur(secs)}, exactly as planned`
     : `Ran ${fmtDur(secs)}, planned ${fmtDur(planned)} (${delta>0?"+":""}${fmtDur(delta)})`;
-  return `<span class="actual ${cls}" title="${escA(title)}">${fmtDur(secs)}</span>`;
+  if(!canEdit) return `<span class="actual ${cls}" title="${escA(title)}">${fmtDur(secs)}</span>`;
+  return `<button class="actual ${cls}" data-act="resethist" title="${escA(title + " — click to reset this segment's recorded time")}">${fmtDur(secs)}</button>`;
 }
 // Anchors doc.start ("HH:MM", still the editable field) to a real instant:
 // today, in whichever timezone the operator's own device is in, at that
@@ -931,6 +947,12 @@ $("rows").addEventListener("click", e => {
   if(a==="down" && i<doc.items.length-1) [doc.items[i+1],doc.items[i]]=[doc.items[i],doc.items[i+1]];
   if(a==="dup") doc.items.splice(i+1,0,{...doc.items[i], id:rid()});
   if(a==="del"){ if(doc.live && doc.live.itemId===doc.items[i].id){ recordHistory(); doc.live=null; } doc.items.splice(i,1); }
+  // Wipes every history entry for this item, not just the latest — "reset"
+  // means "make this look like it never ran," same as a freshly-added row,
+  // not "undo one attempt." No confirm() dialog, matching "del" just above:
+  // this editor already has no undo anywhere else, and a stray click here
+  // is no more consequential than a stray click on delete.
+  if(a==="resethist") doc.history = (doc.history||[]).filter(h => h.itemId !== doc.items[i].id);
   save(); render();
 });
 $("rows").addEventListener("input", e => {
