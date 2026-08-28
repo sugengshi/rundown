@@ -100,12 +100,16 @@
   .actual.over{color:var(--live)}
   .actual.under{color:var(--ok)}
   /* For editors this tag is a real <button> (click to reset a stray test
-     run) — strip button chrome so it stays visually identical to the
-     read-only <span> version viewers/drivers get, just with a pointer
-     cursor and an underline-on-hover as the only hint it's clickable. */
+     run) — chrome stripped so it doesn't look like a form control, but a
+     hover-only underline turned out to be too subtle to notice (an
+     operator couldn't find it from a screenshot, let alone glance at it
+     live). A dotted underline is always on, no width added — same
+     convention as a tooltip-bearing abbr, recognizable as "click me" at
+     rest, not just on interaction. */
   button.actual{background:transparent;border:none;padding:0;margin:0;
-    font:inherit;color:inherit;text-align:left;cursor:pointer}
-  button.actual:hover{text-decoration:underline}
+    font:inherit;color:inherit;text-align:left;cursor:pointer;
+    text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}
+  button.actual:hover{text-decoration-style:solid}
   .cell input.title{font-weight:500}
   .cell.who input,.cell.who .ro{color:var(--muted);font-size:13px}
   .cell.tools{gap:4px;justify-content:flex-end}
