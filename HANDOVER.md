@@ -124,14 +124,22 @@ distinction worth keeping straight if this gets extended:
   a way to leave the show. Mirrors `nextCue()` returning `-1` off the end
   of the list — the two functions are structurally identical, just walking
   opposite directions over the same `type==="cue"` filter.
-- **It's an ordinary `goToIndex()` call under the hood** — same
-  `recordHistory()` logging, same narrow `/live` save, same broadcast to
-  every connected client. "Going back" writes a fresh history entry for
-  whatever cue was live when Back was pressed, same as any other
-  cue-to-cue transition. It does **not** delete or rewind that entry —
-  if you actually want to erase a stray transition, that's what the reset
-  button on the actual-time tag is for (see below), a distinct and
-  already-shipped feature, not this one.
+- **It does NOT log history for the cue it leaves — corrected same-day,
+  right after shipping.** First version called plain `goToIndex(pv)`,
+  which — like every other transition — calls `recordHistory()` first.
+  Wrong: pressing Back is explicitly "that didn't count" (undoing an
+  accidental double-Go, most often), so logging a real history entry for
+  the brief, likely sub-second moment on the cue being left is exactly the
+  kind of stray-timestamp problem the reset button (below) exists to clean
+  up after the fact — Back should just never create it. Fixed by giving
+  `goToIndex()` a second, optional `opts` param: `goToIndex(i, {
+  skipRecord: true })` skips the `recordHistory()` call; every other
+  caller (`goNext()`, a row's own ▶) calls `goToIndex(i)` with no second
+  argument and is completely unaffected. A useful side effect: since
+  nothing is written either way, backing out of a *brief accidental
+  re-visit* to a cue that already has a genuine history entry from an
+  earlier real run can't clobber that older entry with a near-zero-duration
+  one — verified directly (see Testing).
 - **Available to drivers, not just editors** — gated identically to
   `goNext()`/`stopShow()` (`!canEdit && !canDrive` → return), since
   stepping back doesn't touch the running order, only which cue is live,
@@ -633,15 +641,18 @@ were actually run:
   this feature has unit coverage only, not an integration re-run). Worth a
   real save-and-reload check before trusting it on the next live event.
 - **Back button (2026-08-08):** `prevCue()` mirrors `nextCue()` exactly,
-  confirmed by running both over the same heading/cue list. `goPrev()`
-  does nothing with no cue live (`doc.live` stays `null`, not just "no
-  visible change"), does nothing at the very first cue (still on that same
-  cue afterward, not wrapped or cleared), and — the case that actually
-  matters — correctly steps `doc.live` back to the immediately preceding
-  cue while logging a real history entry for the cue it just left, exactly
-  as `goNext()`/any row's ▶ already do. Shares the same
-  `goToIndex()`/`saveLive()` path as every other transition, so it inherits
-  that path's existing coverage rather than needing its own.
+  confirmed by running both over the same heading/cue list. `goPrev()` does
+  nothing with no cue live (`doc.live` stays `null`), does nothing at the
+  very first cue, and correctly steps `doc.live` back to the immediately
+  preceding cue. The history behavior — the part that actually needed
+  fixing same-day — is verified directly: the cue being left gets **no**
+  new history entry at all (confirmed by asserting one is absent, not just
+  by checking the happy path); an EARLIER genuine history entry on that
+  same cue, from a real run before an accidental brief re-visit, survives
+  completely untouched; and, as a regression check, `goToIndex()` called
+  the normal way (what `goNext()`/a row's ▶ actually do) still logs history
+  exactly as before — confirming `skipRecord` only ever changes behavior
+  for `goPrev()`'s one call site.
 
 If you change the permission logic, re-run these. The notes-stripping one is
 the one that silently causes real harm if it regresses.

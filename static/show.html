@@ -923,9 +923,16 @@ function tick(){
 setInterval(tick, 250);
 
 /* ---------- transport (editor or driver) ---------- */
-function goToIndex(i){
+// skipRecord exists for exactly one caller: goPrev(). Every other
+// transition (Go, a row's own ▶, restarting after Stop) logs a real
+// history entry for whatever was live — that's a genuine attempt at that
+// segment. Back is different: it exists to undo a mistake (an accidental
+// double-press of Go, most often), so the brief moment on the cue you're
+// stepping away FROM was never a real attempt at it and shouldn't be
+// logged as one.
+function goToIndex(i, opts){
   if((!canEdit && !canDrive) || !doc || i<0 || i>=doc.items.length || doc.items[i].type!=="cue") return;
-  recordHistory(); // log whatever WAS live, if anything, before overwriting it
+  if(!(opts && opts.skipRecord)) recordHistory(); // log whatever WAS live, if anything, before overwriting it
   doc.live = { itemId: doc.items[i].id, startedAt: now() };
   saveLive(); render();
   const row = document.querySelector(`.row[data-i="${i}"]`);
@@ -944,11 +951,18 @@ function goNext(){
 // has no special case for starting the show — it just does nothing. At the
 // very first cue, prevCue() returns -1 and this is a no-op too, same as
 // goNext() stopping the show instead of running off the end of the list.
+// skipRecord:true is the one thing that makes this NOT just "goToIndex on
+// the previous cue" — the brief, likely-accidental moment on the cue
+// you're backing out of is discarded outright, never written to
+// doc.history at all. This also means a cue that already has a genuine
+// history entry from an earlier real run is protected: backing out of a
+// brief accidental re-visit can't clobber that older, real entry with a
+// near-zero-duration one, because nothing gets written here either way.
 function goPrev(){
   if((!canEdit && !canDrive) || !doc || !doc.live) return;
   const idx = doc.items.findIndex(i => i.id === doc.live.itemId);
   const pv = prevCue(idx);
-  if(pv >= 0) goToIndex(pv);
+  if(pv >= 0) goToIndex(pv, { skipRecord: true });
 }
 function stopShow(){
   if((!canEdit && !canDrive) || !doc) return;
