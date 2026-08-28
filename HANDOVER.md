@@ -102,6 +102,46 @@ and an operator both hitting Go, will fight. Single caller by design.
 
 This is the section that matters. Each of these was argued and settled.
 
+### Back button, added 2026-08-08
+
+"If Go gets pressed twice, [I] want a button to go back to the previous
+segment" — asked live, mid-event. A way to jump to any earlier row already
+existed (that row's own ▶ button, via `goToIndex()` — no direction
+restriction there ever existed), but scrolling back to find the right row
+under time pressure is exactly the kind of thing a dedicated, always-visible
+control avoids.
+
+`prevCue()`/`goPrev()` are the exact mirror of the existing
+`nextCue()`/`goNext()`, deliberately not a generalized "undo" — a
+distinction worth keeping straight if this gets extended:
+
+- **`goPrev()` only acts while a cue is live.** No live cue means no
+  "current position" to step back from — unlike `goNext()`, which has a
+  special case for starting the show from standby, `goPrev()` just does
+  nothing in that state. There's no reasonable "go back" from "nothing is
+  happening."
+- **At the first cue, it's a no-op**, not a wraparound to the last cue or
+  a way to leave the show. Mirrors `nextCue()` returning `-1` off the end
+  of the list — the two functions are structurally identical, just walking
+  opposite directions over the same `type==="cue"` filter.
+- **It's an ordinary `goToIndex()` call under the hood** — same
+  `recordHistory()` logging, same narrow `/live` save, same broadcast to
+  every connected client. "Going back" writes a fresh history entry for
+  whatever cue was live when Back was pressed, same as any other
+  cue-to-cue transition. It does **not** delete or rewind that entry —
+  if you actually want to erase a stray transition, that's what the reset
+  button on the actual-time tag is for (see below), a distinct and
+  already-shipped feature, not this one.
+- **Available to drivers, not just editors** — gated identically to
+  `goNext()`/`stopShow()` (`!canEdit && !canDrive` → return), since
+  stepping back doesn't touch the running order, only which cue is live,
+  which is squarely within what a driver link is already allowed to do.
+- **`Backspace` is the keyboard mirror of `Space`**, with the same
+  `e.preventDefault()` treatment `Space` already gets and for the same
+  reason: Backspace's browser default is "navigate back a page," which
+  would otherwise fire constantly on a driver's tablet, since focus is
+  rarely inside a text field between cues.
+
 ### Drift == (Est. finish − original finish), confirmed not changed, 2026-08-08
 
 Asked to "count the drift from the original finish time with the est finish
@@ -592,6 +632,16 @@ were actually run:
   was lost with it; nothing touched here overlaps that code, but it means
   this feature has unit coverage only, not an integration re-run). Worth a
   real save-and-reload check before trusting it on the next live event.
+- **Back button (2026-08-08):** `prevCue()` mirrors `nextCue()` exactly,
+  confirmed by running both over the same heading/cue list. `goPrev()`
+  does nothing with no cue live (`doc.live` stays `null`, not just "no
+  visible change"), does nothing at the very first cue (still on that same
+  cue afterward, not wrapped or cleared), and — the case that actually
+  matters — correctly steps `doc.live` back to the immediately preceding
+  cue while logging a real history entry for the cue it just left, exactly
+  as `goNext()`/any row's ▶ already do. Shares the same
+  `goToIndex()`/`saveLive()` path as every other transition, so it inherits
+  that path's existing coverage rather than needing its own.
 
 If you change the permission logic, re-run these. The notes-stripping one is
 the one that silently causes real harm if it regresses.
