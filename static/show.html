@@ -710,6 +710,15 @@ function connect(){
       // write to just as much as the operator's do.
       doc.live = m.live;
       if(m.history) doc.history = m.history;
+      // If whoever pressed Go just auto-corrected a stale anchor (see
+      // goToIndex()), every other connected client — operator on another
+      // device, a viewer, a second driver — needs the SAME corrected
+      // startEpoch, or their own Drift/Est. finish keep reading against
+      // the old, wrong schedule until they happen to reload.
+      if(m.startEpoch != null) doc.startEpoch = m.startEpoch;
+      if(m.start) doc.start = m.start;
+      if(m.tz) doc.tz = m.tz;
+      if(canEdit){ const inStart = $("inStart"); if(inStart && m.start) inStart.value = m.start; }
       render();
     }
     if(m.type === "viewers") $("viewerCount").textContent = m.viewers + " watching";
@@ -753,9 +762,16 @@ function save(immediate){
 async function saveLive(){
   if(!canEdit && !canDrive) return;
   try{
+    // startEpoch/start/tz ride along on every call, not just the one that
+    // changes them — harmless (the server just re-writes the same value
+    // most of the time), and keeps this payload's shape uniform instead of
+    // conditionally including fields only when they've changed.
     await api(`/api/rundowns/${SHOW_ID}/live?${auth()}`, {
       method:"PUT", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ live: doc.live, history: doc.history||[] })
+      body: JSON.stringify({
+        live: doc.live, history: doc.history||[],
+        startEpoch: doc.startEpoch, start: doc.start, tz: doc.tz,
+      })
     });
     state(doc.live ? "Live" : "Stopped");
     banner("", "");
@@ -933,6 +949,22 @@ setInterval(tick, 250);
 function goToIndex(i, opts){
   if((!canEdit && !canDrive) || !doc || i<0 || i>=doc.items.length || doc.items[i].type!=="cue") return;
   if(!(opts && opts.skipRecord)) recordHistory(); // log whatever WAS live, if anything, before overwriting it
+  // Starting the show — landing on the very first cue while nothing was
+  // live — re-anchors the whole schedule to THIS exact moment, instead of
+  // trusting "Show starts" to have been re-entered today. This is what
+  // makes that field optional rather than a single point of failure: even
+  // a stale anchor left over from a rehearsal two days ago corrects itself
+  // the instant the real show actually begins. Runs every time the show is
+  // (re)started from the top, not just the very first time ever — an
+  // earlier test-press during setup gets silently superseded the moment
+  // the real Go is pressed, which is the whole point.
+  if(!doc.live && i === doc.items.findIndex(x => x.type === "cue")){
+    doc.startEpoch = now();
+    doc.tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    doc.start = fmtClock(doc.startEpoch);
+    const inStart = $("inStart");
+    if(inStart) inStart.value = doc.start;
+  }
   doc.live = { itemId: doc.items[i].id, startedAt: now() };
   saveLive(); render();
   const row = document.querySelector(`.row[data-i="${i}"]`);

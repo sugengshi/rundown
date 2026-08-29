@@ -181,13 +181,15 @@ Read this part.
 - **Railway is a single container.** If it restarts mid-show, viewers reconnect
   automatically and the WebSocket rooms rebuild — but there's a gap. Nobody's
   uptime is free.
-- **If you set up a rundown ahead of the event, re-enter "Show starts" on
-  the actual day before going live.** The start time only anchors to
-  "today" the moment you type it in — it doesn't refresh itself. Set one up
-  during rehearsal on Monday and run it live on Wednesday without touching
-  that field again, and Drift, Est. finish, and every Start time will be
-  off by two days all at once. Fix: open "Show starts," re-enter the time
-  (same value is fine), on the day of.
+- ~~If you set up a rundown ahead of the event, re-enter "Show starts" on
+  the actual day before going live.~~ **Mostly handled automatically now.**
+  Pressing Go on the very first segment re-anchors the whole schedule to
+  that exact moment, so a stale "Show starts" left over from a rehearsal
+  days earlier corrects itself the instant the real show begins — no need
+  to remember to re-touch that field first. It still governs the Show
+  left / Est. finish figures shown *before* anyone presses Go at all —
+  if someone's checking the schedule before doors open and it looks wrong,
+  that's the one case where it still needs to be set by hand.
 
 ## Layout
 

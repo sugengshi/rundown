@@ -65,12 +65,18 @@ by *endpoint*, not by request-body filtering:
 
 - `PUT /api/rundowns/{id}` — the existing full-document save. Still requires
   edit or owner authority. Unchanged.
-- `PUT /api/rundowns/{id}/live` — accepts edit, owner, *or* drive authority,
-  and can only ever write `data["live"]`. It reads the stored document,
-  replaces that one field, and writes it back. **A drive key cannot smuggle a
-  content change through this endpoint even by sending one** — extra keys in
-  the body are simply never read. That property is the whole point of the
-  separate endpoint; if you ever refactor these two together, you lose it.
+- `PUT /api/rundowns/{id}/live` — accepts edit, owner, *or* drive authority.
+  Originally could only ever write `data["live"]`; the whitelist has since
+  grown to include `history` (2026-08-08, actual-duration logging) and
+  `startEpoch`/`start`/`tz` (2026-08-08, self-correcting schedule anchor —
+  see Decisions below) — each added the same way, validated by type and
+  written only if present. It reads the stored document, replaces only
+  those whitelisted fields, and writes it back. **A drive key cannot smuggle
+  a content change through this endpoint even by sending one** — any other
+  key in the body is simply never read, no matter how the whitelist grows.
+  That property is the whole point of the separate endpoint; if you ever
+  refactor these two together, or add another whitelisted field, re-run the
+  hijack-payload test in `set_live_test.py` before trusting it.
 
 Other things that follow from the split, and shouldn't be undone:
 
@@ -101,6 +107,50 @@ and an operator both hitting Go, will fight. Single caller by design.
 ## Decisions, and what was rejected
 
 This is the section that matters. Each of these was argued and settled.
+
+### Self-correcting startEpoch on real show-start, added 2026-08-08
+
+Direct fallout from the stale-`startEpoch` bug hitting the SAME rundown
+**twice in one live event** — re-entering "Show starts" manually fixed it
+each time, but a manual step you have to remember on the actual day of the
+event, under time pressure, with a live audience, is a bad single point of
+failure. Asked plainly: "start the whole timing from the time Go was
+pressed the first time, not from the entry time."
+
+`goToIndex()` now re-anchors `doc.startEpoch`/`start`/`tz` to `now()`
+whenever it's called with `!doc.live` (nothing currently live) **and** the
+target is the very first cue in the list — i.e., specifically "the show is
+starting from the top," not any arbitrary standby→live transition. Two
+things worth being precise about if this gets touched again:
+
+- **This is not "only the very first time ever."** It fires every time the
+  show is (re)started from the top while in standby. That's deliberate,
+  not a shortcut: a rehearsal test-press on cue 1 during setup will anchor
+  too, but the moment the REAL Go is pressed for the actual event, it
+  fires again and silently supersedes the rehearsal's anchor. This is what
+  makes the fix robust against the exact scenario that caused both
+  incidents — an editor or driver testing the transport controls before a
+  show and forgetting the show's schedule is now anchored to that test.
+- **Jumping into a later cue from standby does NOT anchor.** Only landing
+  on `doc.items.findIndex(x => x.type === "cue")` counts as "starting the
+  show." A driver clicking ▶ on cue 5 while nothing is live is an unusual
+  entry point, not a schedule reset — verified directly (see Testing).
+
+**This required a backend change, not just a frontend one — the reason is
+who's usually holding the clicker.** A driver link is explicitly "the
+person calling the show when that isn't you," and pressing the real Go is
+squarely a driver action, not just an editor one. Persisting a corrected
+anchor from a drive-only session needs a drive-authority endpoint that can
+write it, so `startEpoch`/`start`/`tz` were added to `/live`'s whitelist,
+same pattern `history` established earlier: validated for type, written
+only if present, and broadcast to every connected client (not just saved
+silently) so a viewer or a second device doesn't keep reading Drift/Est.
+finish against the old schedule until they happen to reload. Re-verified
+the narrow-endpoint guarantee holds with these three fields added — a
+drive-authority hijack payload setting title/notes/shareNotes/items
+alongside a legitimate `startEpoch` correction still has every one of
+those ignored; only `live`, `history`, `startEpoch`, `start`, `tz` are ever
+written. See `set_live_test.py`.
 
 ### Back button, added 2026-08-08
 
@@ -534,17 +584,21 @@ What changed, if you touch this again:
   silently. Single operator by design.
 - **Single container.** A Railway restart mid-show drops the WebSocket rooms;
   clients reconnect automatically, but there's a gap.
-- **`startEpoch` doesn't refresh itself.** It's set the first time a rundown
-  is opened, or whenever someone explicitly edits "Show starts" — never
-  silently re-anchored to today. Set up a rundown one day, run it live on a
-  later day without re-touching "Show starts," and every planned time —
-  Drift, Est. finish, the whole Start column — is off by however many days
-  passed, all at once. Symptom looks alarming (a multi-hour Drift out of
-  nowhere) but the fix is one field: re-enter "Show starts" on the day of
-  the event, even to the same value, to force the `change` handler and
-  re-anchor `startEpoch` to today. Nothing catches this automatically yet —
-  a load-time check comparing the anchor's calendar date to today's would
-  close it, if this keeps coming up.
+- ~~**`startEpoch` doesn't refresh itself.**~~ **Mostly fixed 2026-08-08** —
+  see "Self-correcting startEpoch on real show-start" above. It used to be
+  set only the first time a rundown was opened, or whenever someone
+  explicitly edited "Show starts," with no silent re-anchor to today; this
+  hit the same rundown twice in one live event before being fixed at the
+  root. Now `goToIndex()` re-anchors it the moment the show is actually
+  started (landing on the first cue from standby), so a stale anchor left
+  over from an earlier day or a rehearsal corrects itself without anyone
+  having to remember to re-touch "Show starts." What's NOT covered: the
+  standby-only clocks (Show left / Est. finish shown *before* anyone has
+  pressed Go at all) still read against whatever "Show starts" currently
+  says, stale or not — there's nothing to auto-correct against before the
+  show has actually begun. If that standby view matters (e.g. a viewer
+  checking the schedule before doors open), "Show starts" still needs to
+  be right by hand.
 
 ---
 
@@ -653,6 +707,18 @@ were actually run:
   the normal way (what `goNext()`/a row's ▶ actually do) still logs history
   exactly as before — confirming `skipRecord` only ever changes behavior
   for `goPrev()`'s one call site.
+- **self-correcting startEpoch (2026-08-08):** landing on the first cue
+  from standby re-anchors `startEpoch` to `now()` and refreshes the
+  display field; landing on a LATER cue from standby does not anchor;
+  stepping back to cue 1 while already mid-show (e.g. via Back) does not
+  anchor either, even though it lands on index 0 — confirming the gate is
+  genuinely "starting from the top," not just "index equals zero." Backend:
+  a drive-authority hijack payload setting title/notes/shareNotes/items
+  alongside a legitimate `startEpoch`/`start`/`tz` correction has every one
+  of those hijacked fields ignored while the legitimate correction still
+  applies and broadcasts; malformed `startEpoch`/`start`/`tz` (wrong type)
+  each 400 independently; wrong/empty drive key still 403s. See
+  `set_live_test.py`.
 
 If you change the permission logic, re-run these. The notes-stripping one is
 the one that silently causes real harm if it regresses.

@@ -477,10 +477,18 @@ async def set_live(show_id: str, body: dict, k: str = Query(default=""),
     from the server's own last-saved copy of everything else. A drive key
     can never smuggle a content change (item titles, durations, notes,
     name, shareNotes...) in through this door, even if the client sent one:
-    'history' is the one non-'live' field it's allowed to touch, because
+    'history' is one non-'live' field it's allowed to touch, because
     logging what actually happened while driving is part of driving, not
     content editing — a co-facilitator handed a driver link still needs
-    their cue transitions recorded."""
+    their cue transitions recorded.
+
+    startEpoch/start/tz (added alongside history, same reasoning) exist so
+    the client can self-correct a stale schedule anchor the moment the show
+    actually starts — see goToIndex()'s auto-anchor in show.html. A driver
+    is very often the one pressing Go for real, so that correction has to
+    be persistable from a drive-only key or it only ever fixes the local
+    tab that pressed it. Still narrowly scoped: a drive key can shift WHEN
+    the show is anchored, never WHAT is in it."""
     row = await fetch_row(show_id)
     async with pool.acquire() as con:
         drive_key = await get_or_create_drive_key(con, row)
@@ -493,17 +501,35 @@ async def set_live(show_id: str, body: dict, k: str = Query(default=""),
         history = body.get("history")
         if history is not None and not isinstance(history, list):
             raise HTTPException(400, "Expected a history array.")
+        start_epoch = body.get("startEpoch")
+        if start_epoch is not None and not isinstance(start_epoch, (int, float)):
+            raise HTTPException(400, "Expected startEpoch to be a number or null.")
+        start_label = body.get("start")
+        if start_label is not None and not isinstance(start_label, str):
+            raise HTTPException(400, "Expected start to be a string or null.")
+        tz_name = body.get("tz")
+        if tz_name is not None and not isinstance(tz_name, str):
+            raise HTTPException(400, "Expected tz to be a string or null.")
 
         data = as_dict(row["data"])
         data["live"] = live
         if history is not None:
             data["history"] = history
+        if start_epoch is not None:
+            data["startEpoch"] = start_epoch
+        if start_label is not None:
+            data["start"] = start_label
+        if tz_name is not None:
+            data["tz"] = tz_name
         updated = await con.fetchrow(
             """UPDATE rundowns SET data = $2::jsonb, updated_at = now()
                 WHERE id = $1 RETURNING updated_at""",
             show_id, json.dumps(data))
 
-    await hub.broadcast(show_id, {"type": "live", "live": live, "history": data.get("history")})
+    await hub.broadcast(show_id, {
+        "type": "live", "live": live, "history": data.get("history"),
+        "startEpoch": data.get("startEpoch"), "start": data.get("start"), "tz": data.get("tz"),
+    })
     return {"ok": True, "updatedAt": updated["updated_at"].isoformat(),
             "viewers": hub.count(show_id)}
 
